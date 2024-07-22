@@ -1,7 +1,7 @@
 ---
-name: InfluxDB
+name: ga_InfluxDBv1
 version: dev
-slug: influxdb
+slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
 codenotary: codenotary@frenck.dev
