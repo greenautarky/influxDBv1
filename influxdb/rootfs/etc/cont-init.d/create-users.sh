@@ -34,7 +34,7 @@ influx -execute \
          &> /dev/null || true
 
 influx -execute \
-    "CREATE USER ga_telegraf WITH PASSWORD "ga_telegraf" \
+    "CREATE USER ga_telegraf WITH PASSWORD ga_telegraf" \
          &> /dev/null || true
 
 influx -execute \
