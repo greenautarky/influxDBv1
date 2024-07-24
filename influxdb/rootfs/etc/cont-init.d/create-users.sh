@@ -34,6 +34,14 @@ influx -execute \
          &> /dev/null || true
 
 influx -execute \
+    "CREATE USER ga_telegraf WITH PASSWORD "ga_telegraf" \
+         &> /dev/null || true
+
+influx -execute \
+    "GRANT ALL PRIVILEGES TO ga_telegraf" \
+        &> /dev/null || true
+
+influx -execute \
     "SET PASSWORD FOR chronograf = '${secret}'" \
          &> /dev/null || true
 
