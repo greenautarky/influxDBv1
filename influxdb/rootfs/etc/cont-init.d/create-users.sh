@@ -5,8 +5,9 @@
 # ==============================================================================
 declare secret
 
-# If secret file exists, skip this script
+# If secret file exists, skip this script TODO: find a better way to manage the script execution and change of the config
 if bashio::fs.file_exists "/data/secret"; then
+    bashio::log.info "Skipping user creation, since secret exists..."
     exit 0
 fi
 
