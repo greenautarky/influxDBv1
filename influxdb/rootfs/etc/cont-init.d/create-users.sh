@@ -34,12 +34,24 @@ influx -execute \
     "CREATE USER chronograf WITH PASSWORD '${secret}'" \
          &> /dev/null || true
 
+bashio::log.info "Creating user ga_telegraf"
 influx -execute \
     "CREATE USER ga_telegraf WITH PASSWORD ga_telegraf" \
          &> /dev/null || true
 
+bashio::log.info "Setting user rights to ga_telegraf"
 influx -execute \
     "GRANT ALL PRIVILEGES TO ga_telegraf" \
+        &> /dev/null || true
+
+bashio::log.info "Creating user ga_grafana"
+influx -execute \
+    "CREATE USER ga_grafana WITH PASSWORD ga_grafana" \
+         &> /dev/null || true
+
+bashio::log.info "Setting user rights to ga_grafana: Read Only"
+influx -execute \
+    "GRANT READ ON ga_grafana TO ga_telegraf" \
         &> /dev/null || true
 
 influx -execute \

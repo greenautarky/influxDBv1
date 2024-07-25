@@ -5,17 +5,6 @@
 # ==============================================================================
 
 
-bashio::log.info "Creating Database homeassistant"
-influx -execute \
-    "CREATE DATABASE homeassistant" \
-         &> /dev/null || true
-
-bashio::log.info "Creating Database homeassistant"
-influx -execute \
-    "CREATE DATABASE ga_telegraf" \
-         &> /dev/null || true
-
-
 # Configures authentication
 if bashio::config.true 'auth'; then
     sed -i 's/\<auth-enabled\>.*/auth-enabled=true/' /etc/influxdb/influxdb.conf
