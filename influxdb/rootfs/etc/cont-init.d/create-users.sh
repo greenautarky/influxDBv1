@@ -49,10 +49,21 @@ influx -execute \
     "CREATE USER ga_grafana WITH PASSWORD ga_grafana" \
          &> /dev/null || true
 
-bashio::log.info "Setting user rights to ga_grafana: Read Only"
+bashio::log.info "Setting user rights to ga_grafana:ga_telegraf Read Only"
 influx -execute \
     "GRANT READ ON ga_grafana TO ga_telegraf" \
         &> /dev/null || true
+
+bashio::log.info "Setting user rights to ga_grafana:homeassistant Read Only"
+influx -execute \
+    "GRANT READ ON ga_grafana TO homeassistant" \
+        &> /dev/null || true
+
+bashio::log.info "Setting user rights to ga_grafana:_internal Read Only"  ##TODO: Debug or Remove for prod
+influx -execute \
+    "GRANT READ ON ga_grafana TO _internal" \
+        &> /dev/null || true
+
 
 influx -execute \
     "SET PASSWORD FOR chronograf = '${secret}'" \
