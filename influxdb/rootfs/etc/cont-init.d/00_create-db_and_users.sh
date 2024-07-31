@@ -69,6 +69,10 @@ influx -execute \
     "GRANT READ ON ga_telegraf TO ga_grafana" \
         &> /dev/null || true
 
+influx -execute \
+    "GRANT READ ON homeassistant TO ga_grafana" \
+        &> /dev/null || true
+
 
 influx -execute \
     "CREATE USER chronograf WITH PASSWORD '${secret}'" \
