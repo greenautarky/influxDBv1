@@ -5,9 +5,8 @@
 # ==============================================================================
 declare secret
 
-# If secret file exists, skip this script TODO: find a better way to manage the script execution and change of the config
+# If secret file exists, skip this script
 if bashio::fs.file_exists "/data/secret"; then
-    bashio::log.info "Skipping user creation, since secret exists..."
     exit 0
 fi
 
@@ -30,40 +29,50 @@ if [[ "$i" = 0 ]]; then
     bashio::exit.nok "InfluxDB init process failed."
 fi
 
+# Create Databases
+bashio::log.info "Creating Database homeassistant"
+
 influx -execute \
-    "CREATE USER chronograf WITH PASSWORD '${secret}'" \
+    "CREATE DATABASE homeassistant" \
          &> /dev/null || true
 
-bashio::log.info "Creating user ga_telegraf"
+bashio::log.info "Creating Database ga_telegraf"
 influx -execute \
-    "CREATE USER ga_telegraf WITH PASSWORD ga_telegraf" \
+    "CREATE DATABASE ga_telegraf" \
          &> /dev/null || true
 
-bashio::log.info "Setting user rights to ga_telegraf"
+
+# Create user ga_admin
+influx -execute \
+    "CREATE USER ga_admin WITH PASSWORD 'ga_admin'" \
+         &> /dev/null || true
+
+influx -execute \
+    "GRANT ALL PRIVILEGES TO ga_admin" \
+        &> /dev/null || true
+
+# Create user ga_telegraf
+influx -execute \
+    "CREATE USER ga_telegraf WITH PASSWORD 'ga_telegraf'" \
+         &> /dev/null || true
+
 influx -execute \
     "GRANT ALL PRIVILEGES TO ga_telegraf" \
         &> /dev/null || true
 
-bashio::log.info "Creating user ga_grafana"
+# Create user ga_grafana
 influx -execute \
-    "CREATE USER ga_grafana WITH PASSWORD ga_grafana" \
+    "CREATE USER ga_grafana WITH PASSWORD 'ga_grafana'" \
          &> /dev/null || true
 
-bashio::log.info "Setting user rights to ga_grafana:ga_telegraf Read Only"
 influx -execute \
-    "GRANT READ ON ga_grafana TO ga_telegraf" \
+    "GRANT READ ON ga_telegraf TO ga_grafana" \
         &> /dev/null || true
 
-bashio::log.info "Setting user rights to ga_grafana:homeassistant Read Only"
-influx -execute \
-    "GRANT READ ON ga_grafana TO homeassistant" \
-        &> /dev/null || true
 
-bashio::log.info "Setting user rights to ga_grafana:_internal Read Only"  ##TODO: Debug or Remove for prod
 influx -execute \
-    "GRANT READ ON ga_grafana TO _internal" \
-        &> /dev/null || true
-
+    "CREATE USER chronograf WITH PASSWORD '${secret}'" \
+         &> /dev/null || true
 
 influx -execute \
     "SET PASSWORD FOR chronograf = '${secret}'" \
