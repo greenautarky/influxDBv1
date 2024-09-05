@@ -54,9 +54,9 @@ influx -execute \
     "CREATE USER ga_telegraf WITH PASSWORD '${secret}'" \
          &> /dev/null || true
 
-# Create user ga_homeassistant_user
+# Create user ga_ha_influx_user
 influx -execute \
-    "CREATE USER ga_homeassistant_user WITH PASSWORD '${secret}'" \
+    "CREATE USER ga_ha_influx_user WITH PASSWORD '${secret}'" \
          &> /dev/null || true
 
 # Create user ga_grafana
@@ -93,7 +93,7 @@ influx -execute \
         &> /dev/null || true
 
 influx -execute \
-    "GRANT ALL ON ga_homeassistant_db TO ga_homeassistant_user" \
+    "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" \
         &> /dev/null || true
 
 influx -execute \
