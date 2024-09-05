@@ -32,6 +32,7 @@ fi
 # Create Databases
 bashio::log.info "Creating Database homeassistant"
 
+### Create Databases
 influx -execute \
     "CREATE DATABASE homeassistant" \
          &> /dev/null || true
@@ -41,29 +42,38 @@ influx -execute \
     "CREATE DATABASE ga_telegraf" \
          &> /dev/null || true
 
+### Create Users
 
-# Create user ga_admin
+# Create user ga_influx_admin
 influx -execute \
-    "CREATE USER ga_admin WITH PASSWORD 'ga_admin'" \
+    "CREATE USER ga_influx_admin WITH PASSWORD '${secret}'" \
          &> /dev/null || true
-
-influx -execute \
-    "GRANT ALL PRIVILEGES TO ga_admin" \
-        &> /dev/null || true
 
 # Create user ga_telegraf
 influx -execute \
-    "CREATE USER ga_telegraf WITH PASSWORD 'ga_telegraf'" \
+    "CREATE USER ga_telegraf WITH PASSWORD '${secret}'" \
          &> /dev/null || true
 
+# Create user homeassistant
 influx -execute \
-    "GRANT ALL PRIVILEGES TO ga_telegraf" \
-        &> /dev/null || true
+    "CREATE USER homeassistant WITH PASSWORD '${secret}'" \
+         &> /dev/null || true
 
 # Create user ga_grafana
 influx -execute \
     "CREATE USER ga_grafana WITH PASSWORD 'ga_grafana'" \
          &> /dev/null || true
+
+#### Define Rights for Users ####
+
+influx -execute \
+    "GRANT ALL PRIVILEGES TO ga_influx_admin" \
+        &> /dev/null || true
+
+influx -execute \
+    "GRANT ALL PRIVILEGES TO ga_telegraf" \
+        &> /dev/null || true
+
 
 influx -execute \
     "GRANT READ ON ga_telegraf TO ga_grafana" \
@@ -73,25 +83,21 @@ influx -execute \
     "GRANT READ ON homeassistant TO ga_grafana" \
         &> /dev/null || true
 
-
 influx -execute \
     "CREATE USER chronograf WITH PASSWORD '${secret}'" \
          &> /dev/null || true
 
-influx -execute \
-    "SET PASSWORD FOR chronograf = '${secret}'" \
-         &> /dev/null || true
 
 influx -execute \
     "GRANT ALL PRIVILEGES TO chronograf" \
         &> /dev/null || true
 
 influx -execute \
-    "CREATE USER kapacitor WITH PASSWORD '${secret}'" \
+    "GRANT ALL PRIVILEGES TO homeassistant" \
         &> /dev/null || true
 
 influx -execute \
-    "SET PASSWORD FOR kapacitor = '${secret}'" \
+    "CREATE USER kapacitor WITH PASSWORD '${secret}'" \
         &> /dev/null || true
 
 influx -execute \
