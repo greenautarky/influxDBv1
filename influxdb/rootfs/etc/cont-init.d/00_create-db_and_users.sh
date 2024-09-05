@@ -30,11 +30,11 @@ if [[ "$i" = 0 ]]; then
 fi
 
 # Create Databases
-bashio::log.info "Creating Database homeassistant"
+bashio::log.info "Creating Database ga_homeassistant_db"
 
 ### Create Databases
 influx -execute \
-    "CREATE DATABASE homeassistant" \
+    "CREATE DATABASE ga_homeassistant_db" \
          &> /dev/null || true
 
 bashio::log.info "Creating Database ga_telegraf"
@@ -54,9 +54,9 @@ influx -execute \
     "CREATE USER ga_telegraf WITH PASSWORD '${secret}'" \
          &> /dev/null || true
 
-# Create user homeassistant
+# Create user ga_homeassistant_user
 influx -execute \
-    "CREATE USER homeassistant WITH PASSWORD '${secret}'" \
+    "CREATE USER ga_homeassistant_user WITH PASSWORD '${secret}'" \
          &> /dev/null || true
 
 # Create user ga_grafana
@@ -80,7 +80,7 @@ influx -execute \
         &> /dev/null || true
 
 influx -execute \
-    "GRANT READ ON homeassistant TO ga_grafana" \
+    "GRANT READ ON ga_homeassistant_db TO ga_grafana" \
         &> /dev/null || true
 
 influx -execute \
@@ -93,7 +93,7 @@ influx -execute \
         &> /dev/null || true
 
 influx -execute \
-    "GRANT ALL ON homeassistant TO homeassistant" \
+    "GRANT ALL ON ga_homeassistant_db TO ga_homeassistant_user" \
         &> /dev/null || true
 
 influx -execute \
