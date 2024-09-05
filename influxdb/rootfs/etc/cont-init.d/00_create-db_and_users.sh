@@ -93,7 +93,7 @@ influx -execute \
         &> /dev/null || true
 
 influx -execute \
-    "GRANT ALL PRIVILEGES TO homeassistant" \
+    "GRANT ALL ON homeassistant TO homeassistant" \
         &> /dev/null || true
 
 influx -execute \
