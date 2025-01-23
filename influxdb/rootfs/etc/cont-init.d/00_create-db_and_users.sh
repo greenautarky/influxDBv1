@@ -42,6 +42,11 @@ influx -execute \
     "CREATE DATABASE ga_telegraf" \
          &> /dev/null || true
 
+bashio::log.info "Creating Database ga_glances"
+influx -execute \
+    "CREATE DATABASE ga_glances" \
+         &> /dev/null || true
+
 ### Create Users
 
 # Create user ga_influx_admin
@@ -64,6 +69,11 @@ influx -execute \
     "CREATE USER ga_grafana WITH PASSWORD 'ga_grafana'" \
          &> /dev/null || true
 
+# Create user ga_glances
+influx -execute \
+    "CREATE USER ga_glances WITH PASSWORD 'ga_glances'" \
+         &> /dev/null || true
+
 #### Define Rights for Users ####
 
 influx -execute \
@@ -72,6 +82,10 @@ influx -execute \
 
 influx -execute \
     "GRANT ALL PRIVILEGES TO ga_telegraf" \
+        &> /dev/null || true
+
+influx -execute \
+    "GRANT ALL PRIVILEGES TO ga_glances" \
         &> /dev/null || true
 
 
