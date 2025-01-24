@@ -5,13 +5,13 @@
 # ==============================================================================
 declare secret
 
-# If secret file exists, skip this script
+# Generate or reuse secret based on the Hass.io token
 if bashio::fs.file_exists "/data/secret"; then
-    exit 0
+    secret=$(cat /data/secret)
+else
+    secret="${SUPERVISOR_TOKEN:21:32}"
+    echo "${secret}" > /data/secret
 fi
-
-# Generate secret based on the Hass.io token
-secret="${SUPERVISOR_TOKEN:21:32}"
 
 exec 3< <(influxd)
 
@@ -29,96 +29,65 @@ if [[ "$i" = 0 ]]; then
     bashio::exit.nok "InfluxDB init process failed."
 fi
 
+# Function to create database if it doesn't exist
+create_database() {
+    local db="$1"
+    if ! influx -execute "SHOW DATABASES" | grep -q "^${db}$"; then
+        bashio::log.info "Creating Database ${db}"
+        influx -execute "CREATE DATABASE ${db}" &> /dev/null || true
+    else
+        bashio::log.info "Database ${db} already exists, skipping creation."
+    fi
+}
+
+# Function to set retention policy
+set_retention_policy() {
+    local db="$1"
+    local duration="$2"
+    if influx -execute "SHOW RETENTION POLICIES ON ${db}" | grep -q "autogen"; then
+        bashio::log.info "Setting retention policy for database ${db} to ${duration}"
+        influx -execute "ALTER RETENTION POLICY autogen ON ${db} DURATION ${duration} REPLICATION 1 DEFAULT" &> /dev/null || true
+    else
+        bashio::log.info "Retention policy already set for database ${db}"
+    fi
+}
+
+# Function to create or update a user
+create_or_update_user() {
+    local user="$1"
+    local password="$2"
+    influx -execute "SHOW USERS" | grep -q "^${user}" && \
+        bashio::log.info "Updating password for user ${user}" || \
+        bashio::log.info "Creating user ${user}"
+    influx -execute "CREATE USER ${user} WITH PASSWORD '${password}' WITH ALL PRIVILEGES" &> /dev/null || \
+    influx -execute "SET PASSWORD FOR ${user} = '${password}'" &> /dev/null || true
+}
+
 # Create Databases
-bashio::log.info "Creating Database ga_homeassistant_db"
+create_database "ga_homeassistant_db"
+create_database "ga_telegraf"
+create_database "ga_glances"
 
-### Create Databases
-influx -execute \
-    "CREATE DATABASE ga_homeassistant_db" \
-         &> /dev/null || true
+# Set retention policy for ga_glances
+set_retention_policy "ga_glances" "7d"
 
-bashio::log.info "Creating Database ga_telegraf"
-influx -execute \
-    "CREATE DATABASE ga_telegraf" \
-         &> /dev/null || true
+# Create or update users
+create_or_update_user "ga_influx_admin" "${secret}"
+create_or_update_user "ga_telegraf" "${secret}"
+create_or_update_user "ga_ha_influx_user" "${secret}"
+create_or_update_user "ga_grafana" "ga_grafana"
+create_or_update_user "ga_glances" "ga_glances"
+create_or_update_user "chronograf" "${secret}"
+create_or_update_user "kapacitor" "${secret}"
 
-bashio::log.info "Creating Database ga_glances"
-influx -execute \
-    "CREATE DATABASE ga_glances" \
-         &> /dev/null || true
-
-### Create Users
-
-# Create user ga_influx_admin
-influx -execute \
-    "CREATE USER ga_influx_admin WITH PASSWORD '${secret}'" \
-         &> /dev/null || true
-
-# Create user ga_telegraf
-influx -execute \
-    "CREATE USER ga_telegraf WITH PASSWORD '${secret}'" \
-         &> /dev/null || true
-
-# Create user ga_ha_influx_user
-influx -execute \
-    "CREATE USER ga_ha_influx_user WITH PASSWORD '${secret}'" \
-         &> /dev/null || true
-
-# Create user ga_grafana
-influx -execute \
-    "CREATE USER ga_grafana WITH PASSWORD 'ga_grafana'" \
-         &> /dev/null || true
-
-# Create user ga_glances
-influx -execute \
-    "CREATE USER ga_glances WITH PASSWORD 'ga_glances'" \
-         &> /dev/null || true
-
-#### Define Rights for Users ####
-
-influx -execute \
-    "GRANT ALL PRIVILEGES TO ga_influx_admin" \
-        &> /dev/null || true
-
-influx -execute \
-    "GRANT ALL PRIVILEGES TO ga_telegraf" \
-        &> /dev/null || true
-
-influx -execute \
-    "GRANT ALL PRIVILEGES TO ga_glances" \
-        &> /dev/null || true
-
-
-influx -execute \
-    "GRANT READ ON ga_telegraf TO ga_grafana" \
-        &> /dev/null || true
-
-influx -execute \
-    "GRANT READ ON ga_homeassistant_db TO ga_grafana" \
-        &> /dev/null || true
-
-influx -execute \
-    "CREATE USER chronograf WITH PASSWORD '${secret}'" \
-         &> /dev/null || true
-
-
-influx -execute \
-    "GRANT ALL PRIVILEGES TO chronograf" \
-        &> /dev/null || true
-
-influx -execute \
-    "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" \
-        &> /dev/null || true
-
-influx -execute \
-    "CREATE USER kapacitor WITH PASSWORD '${secret}'" \
-        &> /dev/null || true
-
-influx -execute \
-    "GRANT ALL PRIVILEGES TO kapacitor" \
-        &> /dev/null || true
+# Grant privileges
+influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
+influx -execute "GRANT ALL PRIVILEGES TO ga_telegraf" &> /dev/null || true
+influx -execute "GRANT ALL PRIVILEGES TO ga_glances" &> /dev/null || true
+influx -execute "GRANT READ ON ga_telegraf TO ga_grafana" &> /dev/null || true
+influx -execute "GRANT READ ON ga_homeassistant_db TO ga_grafana" &> /dev/null || true
+influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
+influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
+influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
 
 kill "$(pgrep influxd)" >/dev/null 2>&1
-
-# Save secret for future use
-echo "${secret}" > /data/secret
