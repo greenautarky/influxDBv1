@@ -69,6 +69,18 @@ jobs:
             org.opencontainers.image.source=${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
+      - name: Resolve base image
+        id: base
+        shell: bash
+        run: |
+          if [[ "${{ matrix.ha_arch }}" == "armv7" ]]; then
+            # armv7 doesn't exist in v8.x; pin to last published v7.x
+            echo "img=ghcr.io/hassio-addons/debian-base/armv7:v7.8.3" >> "$GITHUB_OUTPUT"
+          else
+            echo "img=ghcr.io/hassio-addons/debian-base/${{ matrix.ha_arch }}:${{ env.BASE_VERSION }}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Using base: $(cat $GITHUB_OUTPUT | sed -n 's/^img=//p')"
+
       - name: Build & Push (${{ matrix.ha_arch }})
         uses: docker/build-push-action@v6
         with:
@@ -78,8 +90,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BUILD_FROM=${
-              { startsWith(matrix.ha_arch, 'armv7') && 'ghcr.io/hassio-addons/debian-base/armv7:v7.8.3' ||
-                 format('ghcr.io/hassio-addons/debian-base/{0}:{1}', matrix.ha_arch, env.BASE_VERSION) }
-            }
+            BUILD_FROM=${{ steps.base.outputs.img }}
             BUILD_ARCH=${{ matrix.ha_arch }}
+            BUILD_VERSION=${{ github.ref_name }}
+            BUILD_DATE=${{ github.sha }}
