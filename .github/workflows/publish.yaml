@@ -25,16 +25,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - ha_arch: aarch64
+          - ha_arch: aarch64   # HA arch
             platform: linux/arm64
+            base: ghcr.io/home-assistant/aarch64-base:latest
           - ha_arch: amd64
             platform: linux/amd64
+            base: ghcr.io/home-assistant/amd64-base:latest
           - ha_arch: armhf
             platform: linux/arm/v6
+            base: ghcr.io/home-assistant/armhf-base:latest
           - ha_arch: armv7
             platform: linux/arm/v7
+            base: ghcr.io/home-assistant/armv7-base:latest
           - ha_arch: i386
             platform: linux/386
+            base: ghcr.io/home-assistant/i386-base:latest
+
 
     steps:
       - name: Checkout
@@ -75,3 +81,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_FROM=${{ matrix.base }}
+            BUILD_ARCH=${{ matrix.ha_arch }}
+            BUILD_VERSION=${{ github.ref_name }}
+            BUILD_DATE=${{ github.sha }}
