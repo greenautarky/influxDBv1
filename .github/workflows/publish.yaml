@@ -15,7 +15,8 @@ permissions:
 env:
   IMAGE_NS: ghcr.io/greenautarky     
   ADDON_SLUG: ga_influxdbv1
-  ADDON_DIR: influxdb                # folder inside the repo that contains Dockerfile
+  ADDON_DIR: influxdb                 # folder inside the repo that contains Dockerfile
+  BASE_VERSION: v8.1.3                # <— match latest release
 
 jobs:
   build:
@@ -27,19 +28,20 @@ jobs:
         include:
           - ha_arch: aarch64
             platform: linux/arm64
-            base: ghcr.io/hassio-addons/debian-base/aarch64:v7.5.0
+            base: ghcr.io/hassio-addons/debian-base/aarch64:${{ env.BASE_VERSION }}
           - ha_arch: amd64
             platform: linux/amd64
-            base: ghcr.io/hassio-addons/debian-base/amd64:v7.5.0
-          - ha_arch: armhf
-            platform: linux/arm/v6
-            base: ghcr.io/hassio-addons/debian-base/armhf:v7.5.0
+            base: ghcr.io/hassio-addons/debian-base/amd64:${{ env.BASE_VERSION }}
           - ha_arch: armv7
             platform: linux/arm/v7
-            base: ghcr.io/hassio-addons/debian-base/armv7:v7.5.0
-          - ha_arch: i386
-            platform: linux/386
-            base: ghcr.io/hassio-addons/debian-base/i386:v7.5.0
+            base: ghcr.io/hassio-addons/debian-base/armv7:${{ env.BASE_VERSION }}
+          # Optional (older): only keep if you actually need them
+          # - ha_arch: armhf
+          #   platform: linux/arm/v6
+          #   base: ghcr.io/hassio-addons/debian-base/armhf:${{ env.BASE_VERSION }}
+          # - ha_arch: i386
+          #   platform: linux/386
+          #   base: ghcr.io/hassio-addons/debian-base/i386:${{ env.BASE_VERSION }}
 
 
 
