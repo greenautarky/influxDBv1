@@ -55,6 +55,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # ... keep your existing 'env', 'matrix', and steps above ...
+
+      - name: Read add-on version from config.yaml
+        id: ver
+        shell: bash
+        run: |
+          ver=$(grep -E '^version:' "${{ env.ADDON_DIR }}/config.yaml" | head -n1 | awk '{print $2}' | tr -d '"')
+          if [ -z "$ver" ]; then
+            echo "Could not read version from config.yaml" >&2
+            exit 1
+          fi
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
+
       - name: Metadata (tags/labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -63,13 +76,14 @@ jobs:
             ${{ env.IMAGE_NS }}/${{ env.ADDON_SLUG }}-${{ matrix.ha_arch }}
           tags: |
             type=raw,value=latest
+            type=raw,value=${{ steps.ver.outputs.value }}
+            # optional: also tag on git tags like v0.0.1
             type=ref,event=tag
-            type=sha,format=short
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Resolve base image # armv7 images do not use v for version number
+      - name: Resolve base image
         id: base
         shell: bash
         run: |
@@ -98,6 +112,5 @@ jobs:
           build-args: |
             BUILD_FROM=${{ steps.base.outputs.img }}
             BUILD_ARCH=${{ matrix.ha_arch }}
-            BUILD_VERSION=${{ github.ref_name }}
-            BUILD_DATE=${{ github.sha }}
+
 
