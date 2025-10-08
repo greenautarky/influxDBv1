@@ -1,6 +1,6 @@
 ---
 name: ga_InfluxDBv1
-version: "0.0.1"
+version: "0.0.2"
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
@@ -35,7 +35,17 @@ options:
   ssl: true
   certfile: fullchain.pem
   keyfile: privkey.pem
-  envvars: []
+  envvars: ## optimized for ressource constrained devices 
+    - name: INFLUXDB_REPORTING_DISABLED
+      value: "true"
+    - name: INFLUXDB_DATA_CACHE_MAX_MEMORY_SIZE
+      value: "64m"
+    - name: INFLUXDB_DATA_MAX_WAL_SIZE
+      value: "16m"
+    - name: INFLUXDB_DATA_WAL_FSYNC_DELAY
+      value: "100ms"
+    - name: INFLUXDB_DATA_TSM_USE_MADV_WILLNEED
+      value: "false"
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   auth: bool
@@ -47,3 +57,4 @@ schema:
     - name: match(^INFLUXDB_([A-Z0-9_])+$)
       value: str
   leave_front_door_open: bool?
+image: ghcr.io/greenautarky/ga_influxdbv1-{arch}
