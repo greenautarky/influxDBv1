@@ -78,7 +78,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BUILD_FROM=ghcr.io/hassio-addons/debian-base/${{ matrix.ha_arch }}:${{ env.BASE_VERSION }}
+            BUILD_FROM=${
+              { startsWith(matrix.ha_arch, 'armv7') && 'ghcr.io/hassio-addons/debian-base/armv7:v7.8.3' ||
+                 format('ghcr.io/hassio-addons/debian-base/{0}:{1}', matrix.ha_arch, env.BASE_VERSION) }
+            }
             BUILD_ARCH=${{ matrix.ha_arch }}
-            BUILD_VERSION=${{ github.ref_name }}
-            BUILD_DATE=${{ github.sha }}
