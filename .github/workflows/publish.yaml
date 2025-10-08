@@ -2,7 +2,7 @@ name: Build & Push (GHCR) - ga_influxdbv1
 
 on:
   push:
-    branches: [ main ]           # change if your default branch is not 'main'
+    branches: [ main ]
     paths:
       - "influxdb/**"
       - ".github/workflows/publish.yml"
@@ -13,10 +13,10 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NS: ghcr.io/greenautarky     
+  IMAGE_NS: ghcr.io/greenautarky
   ADDON_SLUG: ga_influxdbv1
-  ADDON_DIR: influxdb                 # folder inside the repo that contains Dockerfile
-  BASE_VERSION: v8.1.3                # <— match latest release
+  ADDON_DIR: influxdb
+  BASE_VERSION: v8.1.3   # hassio-addons/debian-base tag
 
 jobs:
   build:
@@ -28,22 +28,15 @@ jobs:
         include:
           - ha_arch: aarch64
             platform: linux/arm64
-            base: ghcr.io/hassio-addons/debian-base/aarch64:${{ env.BASE_VERSION }}
           - ha_arch: amd64
             platform: linux/amd64
-            base: ghcr.io/hassio-addons/debian-base/amd64:${{ env.BASE_VERSION }}
           - ha_arch: armv7
             platform: linux/arm/v7
-            base: ghcr.io/hassio-addons/debian-base/armv7:${{ env.BASE_VERSION }}
-          # Optional (older): only keep if you actually need them
+          # Uncomment if you really need them and the base exists for this version:
           # - ha_arch: armhf
           #   platform: linux/arm/v6
-          #   base: ghcr.io/hassio-addons/debian-base/armhf:${{ env.BASE_VERSION }}
           # - ha_arch: i386
           #   platform: linux/386
-          #   base: ghcr.io/hassio-addons/debian-base/i386:${{ env.BASE_VERSION }}
-
-
 
     steps:
       - name: Checkout
@@ -85,7 +78,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BUILD_FROM=${{ matrix.base }}
+            BUILD_FROM=ghcr.io/hassio-addons/debian-base/${{ matrix.ha_arch }}:${{ env.BASE_VERSION }}
             BUILD_ARCH=${{ matrix.ha_arch }}
             BUILD_VERSION=${{ github.ref_name }}
             BUILD_DATE=${{ github.sha }}
