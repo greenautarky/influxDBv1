@@ -25,21 +25,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - ha_arch: aarch64   # HA arch
+          - ha_arch: aarch64
             platform: linux/arm64
-            base: ghcr.io/home-assistant/aarch64-base:latest
+            base: ghcr.io/hassio-addons/debian-base/aarch64:v7.5.0
           - ha_arch: amd64
             platform: linux/amd64
-            base: ghcr.io/home-assistant/amd64-base:latest
+            base: ghcr.io/hassio-addons/debian-base/amd64:v7.5.0
           - ha_arch: armhf
             platform: linux/arm/v6
-            base: ghcr.io/home-assistant/armhf-base:latest
+            base: ghcr.io/hassio-addons/debian-base/armhf:v7.5.0
           - ha_arch: armv7
             platform: linux/arm/v7
-            base: ghcr.io/home-assistant/armv7-base:latest
+            base: ghcr.io/hassio-addons/debian-base/armv7:v7.5.0
           - ha_arch: i386
             platform: linux/386
-            base: ghcr.io/home-assistant/i386-base:latest
+            base: ghcr.io/hassio-addons/debian-base/i386:v7.5.0
+
 
 
     steps:
