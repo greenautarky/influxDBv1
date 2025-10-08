@@ -55,14 +55,33 @@ jobs:
         id: ver
         shell: bash
         run: |
+          set -euo pipefail
           f="${{ env.ADDON_DIR }}/config.yaml"
-          ver=$(sed -nE 's/^[[:space:]]*version:[[:space:]]*"?([^"#]+)"?.*/\1/p;q' "$f" | tr -d '[:space:]')
-          if [ -z "$ver" ]; then
-            echo "Could not read version from $f" >&2
+      
+          echo ">>> Looking for 'version:' in $f"
+          # Show any version lines (for debugging)
+          grep -n -i '^[[:space:]]*version[[:space:]]*:' "$f" || true
+      
+          # Robust extract: take the first 'version:' key, strip comments/quotes/space
+          ver=$(
+            awk 'BEGIN{IGNORECASE=1}
+              /^[[:space:]]*version[[:space:]]*:/{
+                sub(/^.*version[[:space:]]*:[[:space:]]*/,"");  # drop key and colon
+                sub(/[[:space:]]*#.*/,"");                      # drop trailing comment
+                gsub(/"/,"");                                   # drop quotes
+                gsub(/[[:space:]]/,"");                         # drop spaces/tabs
+                print; exit
+              }' "$f"
+          )
+      
+          if [ -z "${ver:-}" ]; then
+            echo "::error::Could not read version from $f"
+            echo "First 30 lines for inspection:"; nl -ba "$f" | sed -n '1,30p'
             exit 1
           fi
-          echo "value=$ver" >> "$GITHUB_OUTPUT"
+      
           echo "Detected add-on version: $ver"
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
 
       - name: Metadata (tags/labels)
         id: meta
