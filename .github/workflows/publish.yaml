@@ -16,7 +16,7 @@ env:
   IMAGE_NS: ghcr.io/greenautarky
   ADDON_SLUG: ga_influxdbv1
   ADDON_DIR: influxdb
-  BASE_VERSION: v8.1.1   # <- correct current tag for aarch64/amd64
+  BASE_VERSION: 9.1.0   # <- current tag for aarch64/amd64
 
 jobs:
   build:
@@ -103,7 +103,7 @@ jobs:
         run: |
           case "${{ matrix.ha_arch }}" in
             armv7)
-              echo "img=ghcr.io/hassio-addons/debian-base/armv7:7.8.1" >> "$GITHUB_OUTPUT"
+              echo "img=ghcr.io/hassio-addons/debian-base/armv7:8.1.4" >> "$GITHUB_OUTPUT"
               ;;
             aarch64|amd64)
               echo "img=ghcr.io/hassio-addons/debian-base/${{ matrix.ha_arch }}:${{ env.BASE_VERSION }}" >> "$GITHUB_OUTPUT"
