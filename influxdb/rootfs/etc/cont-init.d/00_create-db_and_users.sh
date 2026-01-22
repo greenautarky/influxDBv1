@@ -6,7 +6,7 @@
 declare secret
 
 
-SECRETS_YAML="/config/secrets.yaml"
+SECRETS_YAML="/share/influxdb_password.yaml"
 SECRET_KEY="ga_influxdbv1_token"
 
 # Generate or reuse secret based on the Hass.io token
