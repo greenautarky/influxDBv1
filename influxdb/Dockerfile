@@ -13,10 +13,10 @@ ARG KAPACITOR_VERSION="1.5.9-1"
 RUN \
     apt-get update \
     && apt-get install -y --no-install-recommends \
-        libnginx-mod-http-lua=1:0.10.23-1 \
-        luarocks=3.8.0+dfsg1-1 \
+        libnginx-mod-http-lua \
+        luarocks \
         nginx-common \
-        procps=2:4.0.2-3 \
+        procps \
     \
     && luarocks install lua-resty-http 0.15-0 \
     \
