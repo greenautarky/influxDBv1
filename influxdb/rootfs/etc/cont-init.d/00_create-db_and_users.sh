@@ -5,13 +5,34 @@
 # ==============================================================================
 declare secret
 
+
+SECRETS_YAML="/config/secrets.yaml"
+SECRET_KEY="ga_influxdbv1_token"
+
 # Generate or reuse secret based on the Hass.io token
 if bashio::fs.file_exists "/data/secret"; then
-    secret=$(cat /data/secret)
+  secret="$(cat /data/secret)"
 else
-    secret="${SUPERVISOR_TOKEN:21:32}"
-    echo "${secret}" > /data/secret
+  secret="${SUPERVISOR_TOKEN:21:32}"
+  printf '%s\n' "${secret}" > /data/secret
 fi
+
+# YAML-safe single quoting
+yaml_secret="${secret//\'/\'\'}"
+line="${SECRET_KEY}: '${yaml_secret}'"
+
+# Ensure the file exists
+touch "${SECRETS_YAML}"
+
+# Update existing key if present, else append
+if grep -qE "^[[:space:]]*${SECRET_KEY}:" "${SECRETS_YAML}"; then
+  # Replace the whole line for that key (simple + robust for single-line scalar secrets)
+  sed -i -E "s|^[[:space:]]*${SECRET_KEY}:.*|${line}|" "${SECRETS_YAML}"
+else
+  printf '\n# Managed by GA add-on\n%s\n' "${line}" >> "${SECRETS_YAML}"
+fi
+
+bashio::log.info "Ensured ${SECRETS_YAML} contains ${SECRET_KEY}"
 
 exec 3< <(influxd)
 
@@ -75,17 +96,14 @@ set_retention_policy "ga_glances" "7d"
 create_or_update_user "ga_influx_admin" "${secret}"
 create_or_update_user "ga_telegraf" "${secret}"
 create_or_update_user "ga_ha_influx_user" "${secret}"
-create_or_update_user "ga_grafana" "ga_grafana"
-create_or_update_user "ga_glances" "ga_glances"
 create_or_update_user "chronograf" "${secret}"
 create_or_update_user "kapacitor" "${secret}"
 
 # Grant privileges
 influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
 influx -execute "GRANT ALL PRIVILEGES TO ga_telegraf" &> /dev/null || true
-influx -execute "GRANT ALL PRIVILEGES TO ga_glances" &> /dev/null || true
-influx -execute "GRANT READ ON ga_telegraf TO ga_grafana" &> /dev/null || true
-influx -execute "GRANT READ ON ga_homeassistant_db TO ga_grafana" &> /dev/null || true
+#influx -execute "GRANT READ ON ga_telegraf TO ga_grafana" &> /dev/null || true
+#influx -execute "GRANT READ ON ga_homeassistant_db TO ga_grafana" &> /dev/null || true
 influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
 influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
 influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
