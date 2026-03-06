@@ -1,3 +1,5 @@
+> **GreenAutarky Build** — This is a customized version maintained by [GreenAutarky](https://github.com/greenautarky). Based on [hassio-addons/addon-influxdb](https://github.com/hassio-addons/addon-influxdb) by Franck Nijhof. Licensed under MIT.
+
 # Home Assistant Community Add-on: InfluxDB
 
 [![GitHub Release][releases-shield]][releases]
