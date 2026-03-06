@@ -4,7 +4,7 @@ version: "0.0.3"
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
-codenotary: codenotary@frenck.dev
+codenotary: thomas@greenautarky.com
 ingress: true
 ingress_port: 1337
 ingress_stream: true
