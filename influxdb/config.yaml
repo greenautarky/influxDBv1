@@ -1,6 +1,6 @@
 ---
 name: ga_InfluxDBv1
-version: "0.0.3"
+version: "0.0.4"
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
@@ -31,6 +31,12 @@ ports_description:
 auth_api: true
 options:
   auth: true
+  # Credential model for the on-device users. false (default) = legacy shared
+  # secret + ALL PRIVILEGES; true = distinct per-user least-privilege secrets
+  # exported addon-private to /data/influx-users.json for ga_manager delivery
+  # (ADR-0002/0003 device-local plane, Odoo #548). Ships default-false so this
+  # release is a no-op; the flip happens only after consumers are wired.
+  per_user_secrets: false
   reporting: true
   ssl: true
   certfile: fullchain.pem
@@ -49,6 +55,7 @@ options:
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   auth: bool
+  per_user_secrets: bool?
   reporting: bool
   ssl: bool
   certfile: str

@@ -69,6 +69,27 @@ Enable or disable InfluxDB user authentication.
 
 **Note**: _Turning this off is NOT recommended!_
 
+### Option: `per_user_secrets`
+
+Selects the on-device credential model (GreenAutarky, ADR-0002/0003 —
+device-local plane; tracked in Odoo #548). Defaults to `false`.
+
+- `false` (default): legacy behaviour — all InfluxDB users share one password
+  derived from the Supervisor token and are granted `ALL PRIVILEGES`. The
+  shared secret is mirrored to `/share/influxdb_password.yaml`.
+- `true`: each user gets a **distinct random password**, persisted
+  addon-private in `/data/influx-users.json` (mode `0600`, reused across
+  restarts), with **least-privilege** grants for the data users
+  (`ga_ha_influx_user` → `ga_homeassistant_db`; `ga_default` →
+  `gd_data`/`pd_data`). The JSON manifest is the hand-off point for
+  `ga_manager`'s cross-addon credential delivery — nothing is written under
+  `/share`.
+
+**Do not flip this to `true` until the consumers (default_addon, HA Core
+InfluxDB integration) are wired to receive their per-user credential** —
+otherwise, with `auth: true`, they will fail to authenticate. See the
+migration ordering in Odoo #548.
+
 ### Option: `reporting`
 
 This option allows you to disable the reporting of usage data to InfluxData.

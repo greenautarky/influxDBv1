@@ -1,38 +1,135 @@
 #!/command/with-contenv bashio
 # ==============================================================================
 # Home Assistant Community Add-on: InfluxDB
-# Ensure a user for Chronograf & Kapacitor exists within InfluxDB
+# Ensure databases + users exist within InfluxDB.
+#
+# Two credential modes, selected by the `per_user_secrets` addon option:
+#
+#   per_user_secrets: false  (DEFAULT — unchanged legacy behaviour)
+#     All users share ONE password derived from the Supervisor token and are
+#     granted ALL PRIVILEGES. The shared secret is mirrored to
+#     /share/influxdb_password.yaml for consumers that read it via `!secret`.
+#
+#   per_user_secrets: true   (target state — ADR-0002/0003 device-local plane)
+#     Each user gets a DISTINCT random password, persisted addon-private in
+#     /data/influx-users.json (0600, reused across restarts), with
+#     LEAST-PRIVILEGE grants for the two data users. The JSON file is the
+#     hand-off point for ga_manager's cross-addon delivery (it pushes each
+#     consumer its own credential — default_addon via addon options, HA Core
+#     via /config secrets). No shared secret, nothing written under /share.
+#
+# The mode is a flag so this ships as a pure no-op (flag false) and the flip
+# is a config-only change once the consumers are wired — see Odoo #548 /
+# ADR-0003. Provisioning runs against the auth-off temp influxd started here
+# (this cont-init runs before influxdb.sh flips auth-enabled), so no admin
+# bootstrap credential is needed in either mode.
 # ==============================================================================
-declare secret
-
 
 SECRETS_YAML="/share/influxdb_password.yaml"
 SECRET_KEY="ga_influxdbv1_token"
+USERS_JSON="/data/influx-users.json"
+INFLUX_HOST="99f1cad4-ga-influxdbv1"
+INFLUX_PORT=8086
 
-# Generate or reuse secret based on the Hass.io token
-if bashio::fs.file_exists "/data/secret"; then
-  secret="$(cat /data/secret)"
+# Alphanumeric only → safe inside InfluxQL single-quoted strings and in the
+# plain sed/`!secret` extraction consumers use (no quoting needed downstream).
+gen_password() {
+    tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32
+}
+
+declare -A USER_PW
+
+# ─── Legacy shared-secret mode (default) ─────────────────────────────────────
+provision_legacy_secret() {
+    local secret yaml_secret line u
+    if bashio::fs.file_exists "/data/secret"; then
+        secret="$(cat /data/secret)"
+    else
+        secret="${SUPERVISOR_TOKEN:21:32}"
+        printf '%s\n' "${secret}" > /data/secret
+    fi
+
+    # Mirror the shared secret to the HA secrets file for `!secret` consumers.
+    yaml_secret="${secret//\'/\'\'}"
+    line="${SECRET_KEY}: '${yaml_secret}'"
+    touch "${SECRETS_YAML}"
+    if grep -qE "^[[:space:]]*${SECRET_KEY}:" "${SECRETS_YAML}"; then
+        sed -i -E "s|^[[:space:]]*${SECRET_KEY}:.*|${line}|" "${SECRETS_YAML}"
+    else
+        printf '\n# Managed by GA add-on\n%s\n' "${line}" >> "${SECRETS_YAML}"
+    fi
+    bashio::log.info "Ensured ${SECRETS_YAML} contains ${SECRET_KEY}"
+
+    for u in ga_influx_admin ga_telegraf ga_ha_influx_user chronograf kapacitor; do
+        USER_PW[$u]="${secret}"
+    done
+}
+
+# ─── Per-user distinct-secret mode (target) ──────────────────────────────────
+# Passwords persist in /data/influx-users.json so they are stable across
+# restarts (a rotation = delete the file). Reuse existing values; generate
+# only the missing ones so adding a user later doesn't churn the others.
+provision_per_user_secrets() {
+    local u existing
+    for u in ga_influx_admin ga_ha_influx_user ga_default ga_telegraf chronograf kapacitor; do
+        existing=""
+        if bashio::fs.file_exists "${USERS_JSON}"; then
+            existing="$(jq -r --arg u "$u" '.users[$u].password // empty' "${USERS_JSON}" 2>/dev/null)"
+        fi
+        if bashio::var.has_value "${existing}"; then
+            USER_PW[$u]="${existing}"
+        else
+            USER_PW[$u]="$(gen_password)"
+        fi
+    done
+    write_users_json
+    # A stale shared-secret file must not linger as a real credential once we
+    # are in per-user mode (auth is enforced against the per-user passwords).
+    bashio::fs.file_exists "/data/secret" && rm -f /data/secret
+}
+
+# Emit the addon-private hand-off file consumed by ga_manager's cross-addon
+# delivery. Scopes describe the least-privilege grant applied below so the
+# delivery layer can route each consumer its own credential.
+write_users_json() {
+    local tmp
+    tmp="$(mktemp)"
+    jq -n \
+        --arg host "${INFLUX_HOST}" \
+        --argjson port "${INFLUX_PORT}" \
+        --arg ha_pw "${USER_PW[ga_ha_influx_user]}" \
+        --arg def_pw "${USER_PW[ga_default]}" \
+        --arg admin_pw "${USER_PW[ga_influx_admin]}" \
+        --arg tel_pw "${USER_PW[ga_telegraf]}" \
+        --arg chr_pw "${USER_PW[chronograf]}" \
+        --arg kap_pw "${USER_PW[kapacitor]}" \
+        '{
+          version: 1,
+          host: $host,
+          port: $port,
+          users: {
+            ga_ha_influx_user: { password: $ha_pw,    databases: ["ga_homeassistant_db"], scope: "rw" },
+            ga_default:        { password: $def_pw,   databases: ["gd_data","pd_data"],   scope: "rw" },
+            ga_influx_admin:   { password: $admin_pw, databases: [],                       scope: "admin" },
+            ga_telegraf:       { password: $tel_pw,   databases: ["ga_telegraf"],          scope: "rw" },
+            chronograf:        { password: $chr_pw,   databases: [],                       scope: "admin" },
+            kapacitor:         { password: $kap_pw,   databases: [],                       scope: "admin" }
+          }
+        }' > "${tmp}"
+    install -m 0600 "${tmp}" "${USERS_JSON}"
+    rm -f "${tmp}"
+    bashio::log.info "Wrote per-user credential manifest ${USERS_JSON} (0600)"
+}
+
+PER_USER=false
+if bashio::config.true 'per_user_secrets'; then
+    PER_USER=true
+    bashio::log.info "InfluxDB credential mode: per-user distinct secrets (least-privilege)"
+    provision_per_user_secrets
 else
-  secret="${SUPERVISOR_TOKEN:21:32}"
-  printf '%s\n' "${secret}" > /data/secret
+    bashio::log.info "InfluxDB credential mode: legacy shared secret"
+    provision_legacy_secret
 fi
-
-# YAML-safe single quoting
-yaml_secret="${secret//\'/\'\'}"
-line="${SECRET_KEY}: '${yaml_secret}'"
-
-# Ensure the file exists
-touch "${SECRETS_YAML}"
-
-# Update existing key if present, else append
-if grep -qE "^[[:space:]]*${SECRET_KEY}:" "${SECRETS_YAML}"; then
-  # Replace the whole line for that key (simple + robust for single-line scalar secrets)
-  sed -i -E "s|^[[:space:]]*${SECRET_KEY}:.*|${line}|" "${SECRETS_YAML}"
-else
-  printf '\n# Managed by GA add-on\n%s\n' "${line}" >> "${SECRETS_YAML}"
-fi
-
-bashio::log.info "Ensured ${SECRETS_YAML} contains ${SECRET_KEY}"
 
 exec 3< <(influxd)
 
@@ -92,20 +189,44 @@ create_database "ga_glances"
 # Set retention policy for ga_glances
 set_retention_policy "ga_glances" "7d"
 
-# Create or update users
-create_or_update_user "ga_influx_admin" "${secret}"
-create_or_update_user "ga_telegraf" "${secret}"
-create_or_update_user "ga_ha_influx_user" "${secret}"
-create_or_update_user "chronograf" "${secret}"
-create_or_update_user "kapacitor" "${secret}"
+if [[ "${PER_USER}" == "true" ]]; then
+    # Pre-create the data-only databases so the least-privileged ga_default
+    # user never needs admin to CREATE them at first write.
+    create_database "gd_data"
+    create_database "pd_data"
 
-# Grant privileges
-influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
-influx -execute "GRANT ALL PRIVILEGES TO ga_telegraf" &> /dev/null || true
-#influx -execute "GRANT READ ON ga_telegraf TO ga_grafana" &> /dev/null || true
-#influx -execute "GRANT READ ON ga_homeassistant_db TO ga_grafana" &> /dev/null || true
-influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
-influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
-influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
+    # Create/rotate every user with its DISTINCT password. Users are created
+    # WITHOUT admin here (plain CREATE USER); admin is granted explicitly below
+    # only where required, so the data users stay least-privilege.
+    for u in ga_ha_influx_user ga_default ga_telegraf; do
+        influx -execute "CREATE USER ${u} WITH PASSWORD '${USER_PW[$u]}'" &> /dev/null || \
+        influx -execute "SET PASSWORD FOR ${u} = '${USER_PW[$u]}'" &> /dev/null || true
+    done
+    for u in ga_influx_admin chronograf kapacitor; do
+        create_or_update_user "${u}" "${USER_PW[$u]}"
+    done
+
+    # Least-privilege grants for the data users; admin tooling stays admin.
+    influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
+    influx -execute "GRANT ALL ON gd_data TO ga_default" &> /dev/null || true
+    influx -execute "GRANT ALL ON pd_data TO ga_default" &> /dev/null || true
+    influx -execute "GRANT ALL ON ga_telegraf TO ga_telegraf" &> /dev/null || true
+    influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
+    influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
+    influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
+else
+    # Legacy: every user shares the same password + ALL PRIVILEGES.
+    create_or_update_user "ga_influx_admin" "${USER_PW[ga_influx_admin]}"
+    create_or_update_user "ga_telegraf" "${USER_PW[ga_telegraf]}"
+    create_or_update_user "ga_ha_influx_user" "${USER_PW[ga_ha_influx_user]}"
+    create_or_update_user "chronograf" "${USER_PW[chronograf]}"
+    create_or_update_user "kapacitor" "${USER_PW[kapacitor]}"
+
+    influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
+    influx -execute "GRANT ALL PRIVILEGES TO ga_telegraf" &> /dev/null || true
+    influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
+    influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
+    influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
+fi
 
 kill "$(pgrep influxd)" >/dev/null 2>&1
