@@ -50,15 +50,7 @@ provision_legacy_secret() {
     fi
 
     # Mirror the shared secret to the HA secrets file for `!secret` consumers.
-    yaml_secret="${secret//\'/\'\'}"
-    line="${SECRET_KEY}: '${yaml_secret}'"
-    touch "${SECRETS_YAML}"
-    if grep -qE "^[[:space:]]*${SECRET_KEY}:" "${SECRETS_YAML}"; then
-        sed -i -E "s|^[[:space:]]*${SECRET_KEY}:.*|${line}|" "${SECRETS_YAML}"
-    else
-        printf '\n# Managed by GA add-on\n%s\n' "${line}" >> "${SECRETS_YAML}"
-    fi
-    bashio::log.info "Ensured ${SECRETS_YAML} contains ${SECRET_KEY}"
+    write_share_secret "${secret}"
 
     for u in ga_influx_admin ga_telegraf ga_ha_influx_user chronograf kapacitor; do
         USER_PW[$u]="${secret}"
@@ -71,7 +63,7 @@ provision_legacy_secret() {
 # only the missing ones so adding a user later doesn't churn the others.
 provision_per_user_secrets() {
     local u existing
-    for u in ga_influx_admin ga_ha_influx_user ga_default ga_telegraf chronograf kapacitor; do
+    for u in ga_influx_admin ga_ha_influx_user ga_telegraf chronograf kapacitor; do
         existing=""
         if bashio::fs.file_exists "${USERS_JSON}"; then
             existing="$(jq -r --arg u "$u" '.users[$u].password // empty' "${USERS_JSON}" 2>/dev/null)"
@@ -83,9 +75,28 @@ provision_per_user_secrets() {
         fi
     done
     write_users_json
-    # A stale shared-secret file must not linger as a real credential once we
-    # are in per-user mode (auth is enforced against the per-user passwords).
-    bashio::fs.file_exists "/data/secret" && rm -f /data/secret
+
+    # ga_ha_influx_user is shared by default_addon (delivered via the manifest
+    # + ga_manager) AND the HA Core InfluxDB integration (which still reads
+    # /share via `!secret` — its cutover to /config secrets is a later step,
+    # Odoo #549/#550). So keep the /share file in sync with this user's NOW
+    # DISTINCT password, otherwise flipping to per-user mode would 401 HA Core.
+    # /share elimination is Phase 3, after HA Core is migrated.
+    write_share_secret "${USER_PW[ga_ha_influx_user]}"
+}
+
+# Mirror a single password into the HA `!secret` file under SECRET_KEY.
+write_share_secret() {
+    local pw="$1" yaml_secret line
+    yaml_secret="${pw//\'/\'\'}"
+    line="${SECRET_KEY}: '${yaml_secret}'"
+    touch "${SECRETS_YAML}"
+    if grep -qE "^[[:space:]]*${SECRET_KEY}:" "${SECRETS_YAML}"; then
+        sed -i -E "s|^[[:space:]]*${SECRET_KEY}:.*|${line}|" "${SECRETS_YAML}"
+    else
+        printf '\n# Managed by GA add-on\n%s\n' "${line}" >> "${SECRETS_YAML}"
+    fi
+    bashio::log.info "Ensured ${SECRETS_YAML} contains ${SECRET_KEY}"
 }
 
 # Emit the addon-private hand-off file consumed by ga_manager's cross-addon
@@ -98,7 +109,6 @@ write_users_json() {
         --arg host "${INFLUX_HOST}" \
         --argjson port "${INFLUX_PORT}" \
         --arg ha_pw "${USER_PW[ga_ha_influx_user]}" \
-        --arg def_pw "${USER_PW[ga_default]}" \
         --arg admin_pw "${USER_PW[ga_influx_admin]}" \
         --arg tel_pw "${USER_PW[ga_telegraf]}" \
         --arg chr_pw "${USER_PW[chronograf]}" \
@@ -108,8 +118,7 @@ write_users_json() {
           host: $host,
           port: $port,
           users: {
-            ga_ha_influx_user: { password: $ha_pw,    databases: ["ga_homeassistant_db"], scope: "rw" },
-            ga_default:        { password: $def_pw,   databases: ["gd_data","pd_data"],   scope: "rw" },
+            ga_ha_influx_user: { password: $ha_pw,    databases: ["ga_homeassistant_db","gd_data","pd_data"], scope: "rw" },
             ga_influx_admin:   { password: $admin_pw, databases: [],                       scope: "admin" },
             ga_telegraf:       { password: $tel_pw,   databases: ["ga_telegraf"],          scope: "rw" },
             chronograf:        { password: $chr_pw,   databases: [],                       scope: "admin" },
@@ -190,15 +199,15 @@ create_database "ga_glances"
 set_retention_policy "ga_glances" "7d"
 
 if [[ "${PER_USER}" == "true" ]]; then
-    # Pre-create the data-only databases so the least-privileged ga_default
-    # user never needs admin to CREATE them at first write.
+    # Pre-create the data databases so the least-privileged ga_ha_influx_user
+    # never needs admin to CREATE them at first write.
     create_database "gd_data"
     create_database "pd_data"
 
-    # Create/rotate every user with its DISTINCT password. Users are created
-    # WITHOUT admin here (plain CREATE USER); admin is granted explicitly below
-    # only where required, so the data users stay least-privilege.
-    for u in ga_ha_influx_user ga_default ga_telegraf; do
+    # Create/rotate the data users with their DISTINCT passwords. Created
+    # WITHOUT admin (plain CREATE USER); admin is granted explicitly below only
+    # where required, so the data users stay least-privilege.
+    for u in ga_ha_influx_user ga_telegraf; do
         influx -execute "CREATE USER ${u} WITH PASSWORD '${USER_PW[$u]}'" &> /dev/null || \
         influx -execute "SET PASSWORD FOR ${u} = '${USER_PW[$u]}'" &> /dev/null || true
     done
@@ -206,10 +215,13 @@ if [[ "${PER_USER}" == "true" ]]; then
         create_or_update_user "${u}" "${USER_PW[$u]}"
     done
 
-    # Least-privilege grants for the data users; admin tooling stays admin.
+    # ga_ha_influx_user is the single data user shared by default_addon and the
+    # HA Core integration (decision 2026-07-17): grant it the DBs both touch —
+    # ga_homeassistant_db (HA Core writes, default_addon reads) + gd_data/pd_data
+    # (default_addon writes). Admin tooling stays admin.
     influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
-    influx -execute "GRANT ALL ON gd_data TO ga_default" &> /dev/null || true
-    influx -execute "GRANT ALL ON pd_data TO ga_default" &> /dev/null || true
+    influx -execute "GRANT ALL ON gd_data TO ga_ha_influx_user" &> /dev/null || true
+    influx -execute "GRANT ALL ON pd_data TO ga_ha_influx_user" &> /dev/null || true
     influx -execute "GRANT ALL ON ga_telegraf TO ga_telegraf" &> /dev/null || true
     influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
     influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true

@@ -79,11 +79,15 @@ device-local plane; tracked in Odoo #548). Defaults to `false`.
   shared secret is mirrored to `/share/influxdb_password.yaml`.
 - `true`: each user gets a **distinct random password**, persisted
   addon-private in `/data/influx-users.json` (mode `0600`, reused across
-  restarts), with **least-privilege** grants for the data users
-  (`ga_ha_influx_user` → `ga_homeassistant_db`; `ga_default` →
-  `gd_data`/`pd_data`). The JSON manifest is the hand-off point for
-  `ga_manager`'s cross-addon credential delivery — nothing is written under
-  `/share`.
+  restarts), with **least-privilege** grants. `ga_ha_influx_user` is the single
+  data user (shared by default_addon and the HA Core integration) and is
+  granted `ga_homeassistant_db` + `gd_data` + `pd_data`; the admin tooling
+  (`ga_influx_admin`, chronograf, kapacitor) stays privileged. The JSON manifest
+  is the hand-off point for `ga_manager`'s cross-addon credential delivery.
+  `ga_ha_influx_user`'s (now distinct) password is still mirrored to
+  `/share/influxdb_password.yaml` so the HA Core integration keeps working until
+  its later cutover to `/config` secrets — dropping `/share` is a subsequent
+  step (Odoo #549/#550).
 
 **Do not flip this to `true` until the consumers (default_addon, HA Core
 InfluxDB integration) are wired to receive their per-user credential** —
