@@ -89,10 +89,16 @@ jobs:
         with:
           images: |
             ${{ env.IMAGE_NS }}/${{ env.ADDON_SLUG }}-${{ matrix.ha_arch }}
+          # Release tags (:latest, :<version>) ONLY from the default branch, so a
+          # manual workflow_dispatch on a feature branch can't publish a version
+          # that isn't released (that's how 0.0.4 leaked from feat/per-user-
+          # secrets-prep). Non-default branches get a branch/sha pre-release tag.
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.ver.outputs.value }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.ver.outputs.value }},enable={{is_default_branch}}
             type=ref,event=tag
+            type=ref,event=branch,enable=${{ github.ref_name != github.event.repository.default_branch }}
+            type=sha,enable=${{ github.ref_name != github.event.repository.default_branch }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
