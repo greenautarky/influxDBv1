@@ -1,0 +1,55 @@
+name: store-sync-verify
+
+# The Supervisor does NOT read this repo's config.yaml — it reads the copy in
+# the PUBLIC greenautarky/vibe_addons store repo. The two are synced by hand,
+# so a change made only here ships an image and reaches no device, silently.
+# That is the drift the InfluxDB cut (Odoo #682) walks straight into: it closes
+# port 8086 and flips per_user_secrets, and both live in the store copy.
+#
+# This job proves the two agree. It needs NO secret — both configs are public.
+#
+# The PUSHING half (render the store entry, open the OS bake pin PR) lives in
+# greenautarky/ga-ops/.github/workflows/addon-store-lockstep.yml and is NOT
+# wired here yet on purpose: it carries a write token, and this repo is PUBLIC
+# while every other add-on source repo is private. That is a decision to take
+# before handing this repo a PAT, not a side effect of a CI change.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "influxdb/config.yaml"
+      - ".github/workflows/store-sync-verify.yaml"
+  pull_request:
+    paths:
+      - "influxdb/config.yaml"
+      - ".github/workflows/store-sync-verify.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout the store repo (public — carries the renderer + verifier)
+        uses: actions/checkout@v4
+        with:
+          repository: greenautarky/vibe_addons
+          path: .store
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: pip install --quiet "PyYAML>=6,<7"
+      - name: Assert the store entry equals what this source renders to
+        run: |
+          set -euo pipefail
+          python3 .store/scripts/verify_store_sync.py \
+            influxdb/config.yaml \
+            .store/influxdb/config.yaml \
+            --image "ghcr.io/greenautarky/ga_influxdbv1-{arch}" \
+            --name ga_influxdbv1 \
+            --source-repo influxDBv1
