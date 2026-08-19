@@ -89,10 +89,18 @@ jobs:
         with:
           images: |
             ${{ env.IMAGE_NS }}/${{ env.ADDON_SLUG }}-${{ matrix.ha_arch }}
+          # Release tags (:latest, :<version>) ONLY from the default branch.
+          # This repo carries a repository.json, so it is a valid HA add-on
+          # store in its own right: a test device adds it and installs the real
+          # artifact over the real Supervisor path. Branch builds feed THAT and
+          # get a branch/sha tag; :latest and version tags belong to the
+          # collector store (vibe_addons) and to what the OS bakes.
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.ver.outputs.value }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.ver.outputs.value }},enable={{is_default_branch}}
             type=ref,event=tag
+            type=ref,event=branch,enable=${{ github.ref_name != github.event.repository.default_branch }}
+            type=sha,enable=${{ github.ref_name != github.event.repository.default_branch }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
