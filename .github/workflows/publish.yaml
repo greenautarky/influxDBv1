@@ -123,14 +123,73 @@ jobs:
           esac
           echo "Using base: $(sed -n 's/^img=//p' "$GITHUB_OUTPUT")"
 
-      - name: Build & Push (${{ matrix.ha_arch }})
+      # ORDER IS LOAD-BEARING: build -> scan -> push. The image is pushed ONLY
+      # if the CVE gate below passes, so a fixable HIGH/CRITICAL in the distro
+      # layer can never reach GHCR. An earlier version pushed first and scanned
+      # after — that scans nothing you can un-ship. Modelled on the proven
+      # build.yaml in greenautarky/ga-addon-base. Each matrix job is
+      # single-platform (one ha_arch), so `--load` works and there is a real
+      # local image to scan before it exists in the registry.
+      - name: Build (${{ matrix.ha_arch }}) — load, no push yet
         uses: docker/build-push-action@v6
         with:
           context: ./${{ env.ADDON_DIR }}
           platforms: ${{ matrix.platform }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          load: true
+          push: false
+          tags: local/ga_influxdbv1:scan
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BUILD_FROM=${{ steps.base.outputs.img }}
             BUILD_ARCH=${{ matrix.ha_arch }}
+
+      # CVE GATE on the DISTRO layer (dpkg — this is a Debian-based add-on on
+      # hassio-addons/debian-base). A fixable HIGH/CRITICAL here means the
+      # unpinned distro package has a patched version, so a rebuild fixes it —
+      # so we FAIL, and the image is NOT pushed. `--ignore-unfixed` so a distro
+      # CVE with no fix yet cannot permanently wedge the release. Scans the
+      # LOCAL image built above (before it exists in the registry). Direct trivy
+      # invocation (NOT trivy-action) with these exact flags — proven to scope
+      # the scan to OS packages in ga-addon-base. `--pkg-types os` = dpkg here.
+      - name: CVE GATE — distro packages (fixable HIGH/CRITICAL block the push)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --scanners vuln --pkg-types os \
+            --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --no-progress \
+            local/ga_influxdbv1:scan
+
+      # REPORT the bundled application libraries — fixable only when the
+      # dependency is bumped, so surface for visibility but never block the
+      # push. Runs even if the gate above failed, so the full picture is logged.
+      - name: CVE report — bundled libraries (visibility, non-gating)
+        if: always()
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --scanners vuln --pkg-types library \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 --no-progress \
+            local/ga_influxdbv1:scan
+
+      # Reached only if the CVE gate passed. Tag the vetted local image with the
+      # exact tags docker/metadata-action produced (the same
+      # ghcr.io/greenautarky/ga_influxdbv1-<arch>:<version> + :latest scheme the
+      # build-push step used to push directly) and push each one.
+      - name: Push (gate passed — publish the vetted image)
+        run: |
+          set -euo pipefail
+          tags="${{ steps.meta.outputs.tags }}"
+          pushed=0
+          while IFS= read -r t; do
+            [ -z "$t" ] && continue
+            docker tag local/ga_influxdbv1:scan "$t"
+            docker push "$t"
+            pushed=$((pushed + 1))
+          done <<< "$tags"
+          if [ "$pushed" -eq 0 ]; then
+            echo "::error::no tags resolved from metadata-action — nothing was pushed"
+            exit 1
+          fi
+          echo "Pushed $pushed tag(s) for ${{ matrix.ha_arch }}"
