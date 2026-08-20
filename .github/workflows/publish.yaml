@@ -151,14 +151,18 @@ jobs:
       # LOCAL image built above (before it exists in the registry). Direct trivy
       # invocation (NOT trivy-action) with these exact flags — proven to scope
       # the scan to OS packages in ga-addon-base. `--pkg-types os` = dpkg here.
+      # COVERAGE ASSERTION (scripts/cve-gate.sh): a bare `trivy --exit-code 1`
+      # returns SUCCESS when it matches ZERO OS packages — an empty report is
+      # indistinguishable from a clean one. Measured 2026-08-20: the previous
+      # command here returned exit 0 on an image with 143 real binaries and no
+      # package DB. cve-gate.sh adds `--list-all-pkgs`, counts what trivy
+      # actually evaluated, and exits 2 (BROKEN SCAN, never a pass) if that is
+      # zero or below COVERAGE_MIN_PCT of the image's own apk/dpkg DB. Same
+      # fail-closed rule as scan-cves.sh in ha-operating-system. The fixtures in
+      # tests/cve-gate/ re-prove it red AND green on every change.
       - name: CVE GATE — distro packages (fixable HIGH/CRITICAL block the push)
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy:latest image \
-            --scanners vuln --pkg-types os \
-            --severity HIGH,CRITICAL --ignore-unfixed \
-            --exit-code 1 --no-progress \
-            local/ga_influxdbv1:scan
+          scripts/cve-gate.sh local/ga_influxdbv1:scan
 
       # REPORT the bundled application libraries — fixable only when the
       # dependency is bumped, so surface for visibility but never block the
