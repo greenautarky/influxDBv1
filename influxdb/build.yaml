@@ -1,5 +1,16 @@
 ---
 build_from:
+  # aarch64 + amd64: unchanged, still the upstream community add-on base.
   aarch64: ghcr.io/hassio-addons/debian-base/aarch64:7.8.1
   amd64: ghcr.io/hassio-addons/debian-base/amd64:7.8.1
-  armv7: ghcr.io/hassio-addons/debian-base/armv7:7.8.1
+  # armv7: GreenAutarky divergence. Upstream's armv7 debian-base is frozen —
+  # hassio-addons/addon-debian-base dropped armv7 after v8.1.4 (late 2025), so
+  # a 7.8.1 armv7 image receives no further updates, and we still ship armv7
+  # targets. ga-addon-debian-base-armv7 is our own fork of that last
+  # armv7-capable release, rebased onto Debian trixie:
+  # Debian 13 still ships armhf as a full release architecture, so the packages
+  # keep flowing. Measured 2026-08-20: bookworm 12.10 / glibc 2.36 / OpenSSL
+  # 3.0.15 -> trixie 13.6 / glibc 2.41 / OpenSSL 3.5.6; influxd 1.8.10,
+  # chronograf 1.10.2, kapacitord 1.5.9 and the nginx lua auth path all behave
+  # identically to the 7.8.1 build.
+  armv7: ghcr.io/greenautarky/ga-addon-debian-base-armv7:trixie
