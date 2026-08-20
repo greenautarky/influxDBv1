@@ -16,7 +16,12 @@ env:
   IMAGE_NS: ghcr.io/greenautarky
   ADDON_SLUG: ga_influxdbv1
   ADDON_DIR: influxdb
-  BASE_VERSION: 9.1.0   # <- current tag for aarch64/amd64
+  # LEGACY FALLBACK ONLY, and it should never fire. The base now comes from
+  # influxdb/build.yaml, which declares all three arches; the resolver uses this
+  # tag solely for an add-on that has no build.yaml at all, and says so at
+  # WARNING level when it does. Kept rather than deleted so that case still has
+  # a defined answer instead of an empty string.
+  BASE_VERSION: 9.1.0
 
 jobs:
   build:
@@ -105,23 +110,46 @@ jobs:
             org.opencontainers.image.source=${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
+      # The base comes from THIS add-on's build.yaml. It used to be a `case`
+      # statement right here, hardcoding armv7 to debian-base/armv7:8.1.4 — so
+      # build.yaml was never read, and editing build_from changed nothing about
+      # the image that was built.
+      #
+      # That is not a tidiness point, it cost a full CI cycle on 2026-08-20:
+      # 0.0.5 migrated armv7 onto ga-addon-debian-base-armv7:trixie, was proven
+      # on real K31 hardware, merged — and the build still ran on 8.1.4. The CVE
+      # gate then failed with 85 fixable HIGH/CRITICAL and was RIGHT to: it was
+      # scanning the old base. Measured on the two images:
+      #     debian-base/armv7:8.1.4  -> Debian 13.1, 85 fixable HIGH/CRITICAL
+      #     ga-addon-debian-base:trixie -> Debian 13.6, 0
+      # The migration had simply never reached the build.
+      #
+      # Same defect shape was found the same day in ga-ops/addon-publish.yml and
+      # in greenautarky/MQTT: the workflow CONSTRUCTS the base instead of
+      # reading the declaration. All three now use one resolver, which lives in
+      # the PUBLIC vibe_addons repo so a workflow can check it out without a
+      # cross-repo token. It fails rather than falling back when build.yaml
+      # omits an arch, and warns loudly when there is no build.yaml at all.
+      - name: Checkout the store repo (public — carries the base resolver)
+        uses: actions/checkout@v4
+        with:
+          repository: greenautarky/vibe_addons
+          path: .store
+
+      - name: Install PyYAML
+        run: pip install --quiet "PyYAML>=6,<7"
+
       - name: Resolve base image
         id: base
         shell: bash
         run: |
-          case "${{ matrix.ha_arch }}" in
-            armv7)
-              echo "img=ghcr.io/hassio-addons/debian-base/armv7:8.1.4" >> "$GITHUB_OUTPUT"
-              ;;
-            aarch64|amd64)
-              echo "img=ghcr.io/hassio-addons/debian-base/${{ matrix.ha_arch }}:${{ env.BASE_VERSION }}" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "Unsupported arch: ${{ matrix.ha_arch }}" >&2
-              exit 1
-              ;;
-          esac
-          echo "Using base: $(sed -n 's/^img=//p' "$GITHUB_OUTPUT")"
+          set -euo pipefail
+          img=$(python3 .store/scripts/resolve_addon_base.py \
+                  --addon-dir influxdb \
+                  --arch "${{ matrix.ha_arch }}" \
+                  --legacy-tag "${{ env.BASE_VERSION }}")
+          echo "img=$img" >> "$GITHUB_OUTPUT"
+          echo "Using base: $img"
 
       # ORDER IS LOAD-BEARING: build -> scan -> push. The image is pushed ONLY
       # if the CVE gate below passes, so a fixable HIGH/CRITICAL in the distro

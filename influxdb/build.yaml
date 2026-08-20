@@ -1,8 +1,22 @@
 ---
 build_from:
-  # aarch64 + amd64: unchanged, still the upstream community add-on base.
-  aarch64: ghcr.io/hassio-addons/debian-base/aarch64:7.8.1
-  amd64: ghcr.io/hassio-addons/debian-base/amd64:7.8.1
+  # aarch64 + amd64: our own base too, as of 2026-08-20 — and NOT for the reason
+  # armv7 moved. Upstream still builds these two. The problem is that the
+  # upstream community Debian base PINS its package versions and never upgrades
+  # them, so it accumulates fixable HIGH/CRITICALs that no rebuild of ours can
+  # clear. Measured on amd64 under the CVE gate's own rule:
+  #     hassio-addons/debian-base:9.1.0   (what CI actually used)  86
+  #     hassio-addons/debian-base:9.4.0   (newest published)       36
+  #     ga-addon-debian-base-amd64:trixie (ours)                    0
+  # Ours is clean because it runs `apt upgrade` at build time. See
+  # greenautarky/ga-addon-base#2, which extended that image family to aarch64
+  # and amd64 for exactly this.
+  #
+  # This was not optional: the publish matrix builds all three arches and
+  # `sync-downstream` needs every one of them, so an arch that cannot pass the
+  # gate blocks the store sync — and with it the armv7 image the fleet installs.
+  aarch64: ghcr.io/greenautarky/ga-addon-debian-base-aarch64:trixie
+  amd64: ghcr.io/greenautarky/ga-addon-debian-base-amd64:trixie
   # armv7: GreenAutarky divergence. Upstream's armv7 debian-base is frozen —
   # hassio-addons/addon-debian-base dropped armv7 after v8.1.4 (late 2025), so
   # a 7.8.1 armv7 image receives no further updates, and we still ship armv7
