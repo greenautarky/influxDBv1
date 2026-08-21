@@ -53,6 +53,10 @@ provision_legacy_secret() {
     yaml_secret="${secret//\'/\'\'}"
     line="${SECRET_KEY}: '${yaml_secret}'"
     touch "${SECRETS_YAML}"
+    # A live admin credential on the addon<->host bridge must not be
+    # world-readable. 600 covers both the fresh-create case (umask gives 644)
+    # and a pre-existing 644 file; sed -i below preserves these perms.
+    chmod 600 "${SECRETS_YAML}"
     if grep -qE "^[[:space:]]*${SECRET_KEY}:" "${SECRETS_YAML}"; then
         sed -i -E "s|^[[:space:]]*${SECRET_KEY}:.*|${line}|" "${SECRETS_YAML}"
     else
