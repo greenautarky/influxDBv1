@@ -225,3 +225,27 @@ jobs:
             exit 1
           fi
           echo "Pushed $pushed tag(s) for ${{ matrix.ha_arch }}"
+
+  # Downstream lock-step: the PUBLIC vibe_addons store entry is what the
+  # Supervisor reads on the device — ports, options, schema, maps, and the
+  # version it offers. This repo was one of the last two still synced BY HAND:
+  # store-sync-verify.yaml PROVES agreement but cannot close a version gap
+  # (`version` is advisory there — a canary may be published mid-flight), so
+  # the 0.0.7 bump on 2026-08-21 shipped images and left the store on 0.0.6
+  # with every check green. This job closes that gap the same way MQTT,
+  # ga_manager, ga_default_addon, ga_hmvapp_addon and zigbee2mqtt already do.
+  #
+  # Needs DOWNSTREAM_SYNC_PAT in this repo's Actions secrets. This repo is
+  # PUBLIC — handing it a write token to vibe_addons is the deliberate decision
+  # store-sync-verify.yaml used to defer; setting the secret IS taking it.
+  # Until it is set, the called workflow FAILS loudly on the guard step — it
+  # never reports success for a sync it did not do.
+  sync-downstream:
+    needs: build
+    if: github.ref_name == github.event.repository.default_branch
+    uses: greenautarky/ga-ops/.github/workflows/addon-store-lockstep.yml@main
+    with:
+      addon_dir: influxdb
+      addon_slug: ga_influxdbv1
+      store_dir: influxdb
+    secrets: inherit
