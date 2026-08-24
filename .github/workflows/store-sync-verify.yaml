@@ -16,6 +16,20 @@ name: store-sync-verify
 # decision, taken by setting that secret (and fail-loud until then).
 # This verify stays as the TOKENLESS guard: it runs on every PR, where the
 # pushing half cannot.
+#
+# WHAT IT COMPARES, AND WHY THAT DEPENDS ON THE EVENT (2026-08-24)
+#   The invariant is "the store entry equals what MAIN renders to". On a push
+#   to main that is exactly the checked-out config. On a PULL REQUEST it is
+#   NOT: the store is synced when the PR merges, so comparing the store against
+#   the PROPOSED config makes every config-changing PR structurally red — the
+#   1.0.0 cut hit this on its first push, going red for the one reason the job
+#   can never help with before a merge.
+#
+#   A gate that cannot be green exactly when it fires is the shape people learn
+#   to click past, so on a pull request this compares the store against the BASE
+#   branch instead. That still asserts the real invariant tokenlessly on every
+#   PR — it catches drift that exists TODAY, which is the drift that ships — and
+#   it reports what the PR will change as information rather than as a failure.
 
 on:
   push:
@@ -47,12 +61,47 @@ jobs:
           python-version: "3.12"
       - name: Install PyYAML
         run: pip install --quiet "PyYAML>=6,<7"
+      # On a PR the subject is the BASE branch's config, not the PR's — see the
+      # header. Extracted from git rather than re-fetched, so it is the exact
+      # commit this PR is based on.
+      - name: Resolve the config the store is supposed to match
+        id: subject
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            mkdir -p /tmp/base
+            if ! git show "origin/${{ github.base_ref }}:influxdb/config.yaml" > /tmp/base/config.yaml; then
+              echo "::error::could not read influxdb/config.yaml from origin/${{ github.base_ref }} — the comparison could not run, which is NOT a pass"
+              exit 1
+            fi
+            [ -s /tmp/base/config.yaml ] || { echo "::error::base config.yaml is empty — refusing to compare against nothing"; exit 1; }
+            echo "path=/tmp/base/config.yaml" >> "$GITHUB_OUTPUT"
+            echo "Comparing the store against origin/${{ github.base_ref }} (the state that is live today)."
+          else
+            echo "path=influxdb/config.yaml" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Assert the store entry equals what this source renders to
         run: |
           set -euo pipefail
           python3 .store/scripts/verify_store_sync.py \
-            influxdb/config.yaml \
+            "${{ steps.subject.outputs.path }}" \
             .store/influxdb/config.yaml \
             --image "ghcr.io/greenautarky/ga_influxdbv1-{arch}" \
             --name ga_influxdbv1 \
             --source-repo influxDBv1
+
+      # Information, not a verdict: what the merge will hand the store. Never
+      # fails — the sync itself is the post-merge job's responsibility, and this
+      # job has no token to do anything about it.
+      - name: Report what this PR will change in the store
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          if diff -q /tmp/base/config.yaml influxdb/config.yaml >/dev/null 2>&1; then
+            echo "This PR does not change the add-on config; the store entry is unaffected."
+          else
+            echo "This PR changes the add-on config. On merge, the lockstep will render and push:"
+            diff -u /tmp/base/config.yaml influxdb/config.yaml || true
+          fi
