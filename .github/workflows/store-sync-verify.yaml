@@ -8,11 +8,14 @@ name: store-sync-verify
 #
 # This job proves the two agree. It needs NO secret — both configs are public.
 #
-# The PUSHING half (render the store entry, open the OS bake pin PR) lives in
-# greenautarky/ga-ops/.github/workflows/addon-store-lockstep.yml and is NOT
-# wired here yet on purpose: it carries a write token, and this repo is PUBLIC
-# while every other add-on source repo is private. That is a decision to take
-# before handing this repo a PAT, not a side effect of a CI change.
+# The PUSHING half (render the store entry and push it) is the
+# `sync-downstream` job in publish.yaml, calling
+# greenautarky/ga-ops/.github/workflows/addon-store-lockstep.yml. It runs only
+# when DOWNSTREAM_SYNC_PAT is set in this repo's Actions secrets — this repo
+# is PUBLIC, so handing it a write token to vibe_addons is a deliberate
+# decision, taken by setting that secret (and fail-loud until then).
+# This verify stays as the TOKENLESS guard: it runs on every PR, where the
+# pushing half cannot.
 
 on:
   push:
