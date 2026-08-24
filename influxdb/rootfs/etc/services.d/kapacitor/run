@@ -8,7 +8,9 @@ declare secret
 # Wait for InfluxDB to become available
 s6-svwait -u -t 5000 /run/service//influxdb
 
-secret=$(</data/secret)
+# shellcheck source=/dev/null
+source /usr/lib/ga/influx-credentials.sh
+secret="$(ga_influx_password kapacitor)"
 
 # Wait for InfluxDB...
 bashio::log.info "Kapacitor is waiting until InfluxDB is available..."

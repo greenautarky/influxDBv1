@@ -11,6 +11,19 @@ on:
       - synchronize
   workflow_dispatch:
 
+# The called workflow declares `security-events: write` (and actions/packages
+# read). A reusable workflow cannot escalate beyond the caller's token, so if
+# the caller does not grant these the call is rejected BEFORE any job exists —
+# which surfaces as `startup_failure`: no job, no red check, nothing on the PR
+# except one fewer check than yesterday. This repo's CI had been in that state
+# since at least 2026-08-20, across six merges, precisely because a workflow
+# that never starts is invisible rather than loud.
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  security-events: write
+
 jobs:
   workflows:
     uses: hassio-addons/workflows/.github/workflows/addon-ci.yaml@main

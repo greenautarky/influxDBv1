@@ -1,139 +1,138 @@
 #!/command/with-contenv bashio
 # ==============================================================================
-# Home Assistant Community Add-on: InfluxDB
-# Ensure databases + users exist within InfluxDB.
+# GreenAutarky InfluxDB add-on — database + credential provisioning
 #
-# Two credential modes, selected by the `per_user_secrets` addon option:
+# ONE USER PER CONSUMER. No shared secret, no file under /share.
 #
-#   per_user_secrets: false  (DEFAULT — unchanged legacy behaviour)
-#     All users share ONE password derived from the Supervisor token and are
-#     granted ALL PRIVILEGES. The shared secret is mirrored to
-#     /share/influxdb_password.yaml for consumers that read it via `!secret`.
+# This replaced a model in which five users shared a single password derived
+# from a slice of the Supervisor token, every one of them WITH ALL PRIVILEGES,
+# mirrored in clear text to /share/influxdb_password.yaml — a live admin
+# credential on the add-on<->host bridge, readable by every `share:rw` add-on.
+# Measured on a device 2026-08-18; the decision to cut rather than migrate is
+# recorded in Odoo #682 (all devices are being replaced, so the new major only
+# has to be right for NEW devices).
 #
-#   per_user_secrets: true   (target state — ADR-0002/0003 device-local plane)
-#     Each user gets a DISTINCT random password, persisted addon-private in
-#     /data/influx-users.json (0600, reused across restarts), with
-#     LEAST-PRIVILEGE grants for the two data users. The JSON file is the
-#     hand-off point for ga_manager's cross-addon delivery (it pushes each
-#     consumer its own credential — default_addon via addon options, HA Core
-#     via /config secrets). No shared secret, nothing written under /share.
+# HOW IT WORKS
+#   Each consumer gets its own user with its own random password and grants on
+#   only the databases it uses. The passwords live in /data/influx-users.json
+#   (0600, add-on private), which is also the hand-off point: ga_manager reads
+#   it and delivers each consumer its own credential into that consumer's own
+#   add-on options. Nothing is written where another add-on can read it.
 #
-# The mode is a flag so this ships as a pure no-op (flag false) and the flip
-# is a config-only change once the consumers are wired — see Odoo #548 /
-# ADR-0003. Provisioning runs against the auth-off temp influxd started here
-# (this cont-init runs before influxdb.sh flips auth-enabled), so no admin
-# bootstrap credential is needed in either mode.
+#   Passwords persist across restarts because consumers hold them; regenerating
+#   on every start would silently break every consumer that cached one. A
+#   rotation is therefore an explicit act: delete the file and restart.
+#
+# FAIL CLOSED
+#   Every InfluxQL statement here is checked. The previous version ended each
+#   one with `|| true`, so a failed CREATE USER or SET PASSWORD was invisible —
+#   the add-on came up looking healthy with a credential nobody could use, and
+#   the consumers only discovered it at their next write. A provisioning step
+#   that did not succeed now stops the add-on.
 # ==============================================================================
 
-SECRETS_YAML="/share/influxdb_password.yaml"
-SECRET_KEY="ga_influxdbv1_token"
 USERS_JSON="/data/influx-users.json"
+LEGACY_SECRET="/data/secret"
+LEGACY_SHARE_SECRET="/share/influxdb_password.yaml"
 INFLUX_HOST="99f1cad4-ga-influxdbv1"
 INFLUX_PORT=8086
 
+# The consumer table IS the design. Adding a consumer means adding a row here
+# and nothing else: the manifest, the user, and the grants all derive from it.
+#
+#   <user>|<comma-separated databases, or ADMIN>|<what reads it>
+CONSUMERS=(
+    "ga_ha_influx_user|ga_homeassistant_db|Home Assistant Core recorder"
+    "ga_default|gd_data,pd_data|ga_default_addon"
+    "ga_influx_admin|ADMIN|operator / maintenance"
+    "chronograf|ADMIN|bundled Chronograf UI"
+    "kapacitor|ADMIN|bundled Kapacitor"
+)
+
+# Users this add-on used to create and no longer does. They are DROPPED rather
+# than left alone: an abandoned user keeps its old password and, in the previous
+# model, ALL PRIVILEGES — a credential nobody owns is worse than no credential.
+RETIRED_USERS=(ga_telegraf)
+
 # Alphanumeric only → safe inside InfluxQL single-quoted strings and in the
-# plain sed/`!secret` extraction consumers use (no quoting needed downstream).
+# plain extraction consumers use, so no quoting rules travel downstream.
 gen_password() {
     tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32
 }
 
 declare -A USER_PW
+declare -A USER_DBS
 
-# ─── Legacy shared-secret mode (default) ─────────────────────────────────────
-provision_legacy_secret() {
-    local secret yaml_secret line u
-    if bashio::fs.file_exists "/data/secret"; then
-        secret="$(cat /data/secret)"
-    else
-        secret="${SUPERVISOR_TOKEN:21:32}"
-        printf '%s\n' "${secret}" > /data/secret
-    fi
-
-    # Mirror the shared secret to the HA secrets file for `!secret` consumers.
-    yaml_secret="${secret//\'/\'\'}"
-    line="${SECRET_KEY}: '${yaml_secret}'"
-    touch "${SECRETS_YAML}"
-    # A live admin credential on the addon<->host bridge must not be
-    # world-readable. 600 covers both the fresh-create case (umask gives 644)
-    # and a pre-existing 644 file; sed -i below preserves these perms.
-    chmod 600 "${SECRETS_YAML}"
-    if grep -qE "^[[:space:]]*${SECRET_KEY}:" "${SECRETS_YAML}"; then
-        sed -i -E "s|^[[:space:]]*${SECRET_KEY}:.*|${line}|" "${SECRETS_YAML}"
-    else
-        printf '\n# Managed by GA add-on\n%s\n' "${line}" >> "${SECRETS_YAML}"
-    fi
-    bashio::log.info "Ensured ${SECRETS_YAML} contains ${SECRET_KEY}"
-
-    for u in ga_influx_admin ga_telegraf ga_ha_influx_user chronograf kapacitor; do
-        USER_PW[$u]="${secret}"
+parse_consumers() {
+    local row user dbs
+    for row in "${CONSUMERS[@]}"; do
+        user="${row%%|*}"
+        dbs="${row#*|}"; dbs="${dbs%%|*}"
+        USER_DBS[$user]="$dbs"
     done
 }
 
-# ─── Per-user distinct-secret mode (target) ──────────────────────────────────
-# Passwords persist in /data/influx-users.json so they are stable across
-# restarts (a rotation = delete the file). Reuse existing values; generate
-# only the missing ones so adding a user later doesn't churn the others.
-provision_per_user_secrets() {
-    local u existing
-    for u in ga_influx_admin ga_ha_influx_user ga_default ga_telegraf chronograf kapacitor; do
+# Reuse what is already provisioned, generate only what is missing. Adding a
+# consumer later must not churn the credentials the existing ones hold.
+load_or_generate_passwords() {
+    local user existing
+    for user in "${!USER_DBS[@]}"; do
         existing=""
         if bashio::fs.file_exists "${USERS_JSON}"; then
-            existing="$(jq -r --arg u "$u" '.users[$u].password // empty' "${USERS_JSON}" 2>/dev/null)"
+            existing="$(jq -r --arg u "$user" '.users[$u].password // empty' "${USERS_JSON}" 2>/dev/null)"
         fi
         if bashio::var.has_value "${existing}"; then
-            USER_PW[$u]="${existing}"
+            USER_PW[$user]="${existing}"
         else
-            USER_PW[$u]="$(gen_password)"
+            USER_PW[$user]="$(gen_password)"
+            bashio::log.info "Generated a new credential for ${user}"
         fi
     done
-    write_users_json
-    # A stale shared-secret file must not linger as a real credential once we
-    # are in per-user mode (auth is enforced against the per-user passwords).
-    bashio::fs.file_exists "/data/secret" && rm -f /data/secret
 }
 
-# Emit the addon-private hand-off file consumed by ga_manager's cross-addon
-# delivery. Scopes describe the least-privilege grant applied below so the
-# delivery layer can route each consumer its own credential.
-write_users_json() {
-    local tmp
+# The manifest ga_manager reads. `scope` and `databases` describe the grant that
+# is actually applied below, so the delivery layer routes on the same facts the
+# database enforces rather than on a second, hand-kept list.
+write_manifest() {
+    local tmp user entry
     tmp="$(mktemp)"
-    jq -n \
-        --arg host "${INFLUX_HOST}" \
-        --argjson port "${INFLUX_PORT}" \
-        --arg ha_pw "${USER_PW[ga_ha_influx_user]}" \
-        --arg def_pw "${USER_PW[ga_default]}" \
-        --arg admin_pw "${USER_PW[ga_influx_admin]}" \
-        --arg tel_pw "${USER_PW[ga_telegraf]}" \
-        --arg chr_pw "${USER_PW[chronograf]}" \
-        --arg kap_pw "${USER_PW[kapacitor]}" \
-        '{
-          version: 1,
-          host: $host,
-          port: $port,
-          users: {
-            ga_ha_influx_user: { password: $ha_pw,    databases: ["ga_homeassistant_db"], scope: "rw" },
-            ga_default:        { password: $def_pw,   databases: ["gd_data","pd_data"],   scope: "rw" },
-            ga_influx_admin:   { password: $admin_pw, databases: [],                       scope: "admin" },
-            ga_telegraf:       { password: $tel_pw,   databases: ["ga_telegraf"],          scope: "rw" },
-            chronograf:        { password: $chr_pw,   databases: [],                       scope: "admin" },
-            kapacitor:         { password: $kap_pw,   databases: [],                       scope: "admin" }
-          }
-        }' > "${tmp}"
-    install -m 0600 "${tmp}" "${USERS_JSON}"
+    entry="$(jq -n '{}')"
+    for user in "${!USER_DBS[@]}"; do
+        if [[ "${USER_DBS[$user]}" == "ADMIN" ]]; then
+            entry="$(jq --arg u "$user" --arg p "${USER_PW[$user]}" \
+                '.[$u] = {password:$p, databases:[], scope:"admin"}' <<< "$entry")"
+        else
+            entry="$(jq --arg u "$user" --arg p "${USER_PW[$user]}" --arg d "${USER_DBS[$user]}" \
+                '.[$u] = {password:$p, databases:($d|split(",")), scope:"rw"}' <<< "$entry")"
+        fi
+    done
+    jq -n --arg host "${INFLUX_HOST}" --argjson port "${INFLUX_PORT}" --argjson users "$entry" \
+        '{version:2, host:$host, port:$port, users:$users}' > "${tmp}" \
+        || bashio::exit.nok "could not render ${USERS_JSON}"
+    install -m 0600 "${tmp}" "${USERS_JSON}" \
+        || bashio::exit.nok "could not install ${USERS_JSON}"
     rm -f "${tmp}"
-    bashio::log.info "Wrote per-user credential manifest ${USERS_JSON} (0600)"
+    bashio::log.info "Wrote per-consumer credential manifest ${USERS_JSON} (0600)"
 }
 
-PER_USER=false
-if bashio::config.true 'per_user_secrets'; then
-    PER_USER=true
-    bashio::log.info "InfluxDB credential mode: per-user distinct secrets (least-privilege)"
-    provision_per_user_secrets
-else
-    bashio::log.info "InfluxDB credential mode: legacy shared secret"
-    provision_legacy_secret
-fi
+# The two artefacts of the shared-secret model. Both are removed, not merely
+# stopped being updated: a stale credential file that still looks live is worse
+# than one that is gone, because nothing tells a reader it is dead.
+drop_legacy_secret_artifacts() {
+    if bashio::fs.file_exists "${LEGACY_SECRET}"; then
+        rm -f "${LEGACY_SECRET}" \
+            && bashio::log.info "Removed the legacy shared secret ${LEGACY_SECRET}"
+    fi
+    if bashio::fs.file_exists "${LEGACY_SHARE_SECRET}"; then
+        rm -f "${LEGACY_SHARE_SECRET}" \
+            && bashio::log.info "Removed the legacy shared secret mirror ${LEGACY_SHARE_SECRET}"
+    fi
+}
+
+parse_consumers
+load_or_generate_passwords
+write_manifest
+drop_legacy_secret_artifacts
 
 exec 3< <(influxd)
 
@@ -151,86 +150,84 @@ if [[ "$i" = 0 ]]; then
     bashio::exit.nok "InfluxDB init process failed."
 fi
 
-# Function to create database if it doesn't exist
+# Every statement goes through here. No `|| true`: a provisioning error stops
+# the add-on rather than producing a healthy-looking container whose consumers
+# cannot authenticate.
+influx_exec() {
+    local what="$1" stmt="$2" err
+    if ! err="$(influx -execute "${stmt}" 2>&1)"; then
+        bashio::log.error "${what} failed: ${err}"
+        bashio::exit.nok "InfluxDB provisioning failed at: ${what}"
+    fi
+}
+
+user_exists() {
+    influx -execute "SHOW USERS" 2>/dev/null | awk 'NR>2 {print $1}' | grep -qx "$1"
+}
+
 create_database() {
     local db="$1"
-    if ! influx -execute "SHOW DATABASES" | grep -q "^${db}$"; then
-        bashio::log.info "Creating Database ${db}"
-        influx -execute "CREATE DATABASE ${db}" &> /dev/null || true
+    if influx -execute "SHOW DATABASES" 2>/dev/null | grep -qx "${db}"; then
+        bashio::log.info "Database ${db} already exists"
     else
-        bashio::log.info "Database ${db} already exists, skipping creation."
+        bashio::log.info "Creating database ${db}"
+        influx_exec "create database ${db}" "CREATE DATABASE ${db}"
     fi
 }
 
-# Function to set retention policy
 set_retention_policy() {
-    local db="$1"
-    local duration="$2"
-    if influx -execute "SHOW RETENTION POLICIES ON ${db}" | grep -q "autogen"; then
-        bashio::log.info "Setting retention policy for database ${db} to ${duration}"
-        influx -execute "ALTER RETENTION POLICY autogen ON ${db} DURATION ${duration} REPLICATION 1 DEFAULT" &> /dev/null || true
+    local db="$1" duration="$2"
+    influx_exec "retention policy on ${db}" \
+        "ALTER RETENTION POLICY autogen ON ${db} DURATION ${duration} REPLICATION 1 DEFAULT"
+}
+
+# Create every database a consumer is granted on, so a least-privileged user
+# never needs admin just to create its own database at first write.
+for user in "${!USER_DBS[@]}"; do
+    [[ "${USER_DBS[$user]}" == "ADMIN" ]] && continue
+    IFS=',' read -ra _dbs <<< "${USER_DBS[$user]}"
+    for db in "${_dbs[@]}"; do
+        create_database "${db}"
+    done
+done
+
+# Users. Created WITHOUT privileges; admin is granted explicitly below and only
+# where the consumer table says so, so a data user cannot quietly become admin
+# by being created that way.
+for user in "${!USER_DBS[@]}"; do
+    if user_exists "${user}"; then
+        bashio::log.info "Updating password for ${user}"
+        influx_exec "set password for ${user}" "SET PASSWORD FOR ${user} = '${USER_PW[$user]}'"
     else
-        bashio::log.info "Retention policy already set for database ${db}"
-    fi
-}
-
-# Function to create or update a user
-create_or_update_user() {
-    local user="$1"
-    local password="$2"
-    influx -execute "SHOW USERS" | grep -q "^${user}" && \
-        bashio::log.info "Updating password for user ${user}" || \
         bashio::log.info "Creating user ${user}"
-    influx -execute "CREATE USER ${user} WITH PASSWORD '${password}' WITH ALL PRIVILEGES" &> /dev/null || \
-    influx -execute "SET PASSWORD FOR ${user} = '${password}'" &> /dev/null || true
-}
+        influx_exec "create user ${user}" "CREATE USER ${user} WITH PASSWORD '${USER_PW[$user]}'"
+    fi
+done
 
-# Create Databases
-create_database "ga_homeassistant_db"
-create_database "ga_telegraf"
-create_database "ga_glances"
+# Grants, straight off the consumer table.
+for user in "${!USER_DBS[@]}"; do
+    if [[ "${USER_DBS[$user]}" == "ADMIN" ]]; then
+        influx_exec "grant admin to ${user}" "GRANT ALL PRIVILEGES TO ${user}"
+    else
+        IFS=',' read -ra _dbs <<< "${USER_DBS[$user]}"
+        for db in "${_dbs[@]}"; do
+            influx_exec "grant ${user} on ${db}" "GRANT ALL ON ${db} TO ${user}"
+        done
+    fi
+done
 
-# Set retention policy for ga_glances
-set_retention_policy "ga_glances" "7d"
+# Retire users this add-on no longer provisions. Dropping a USER destroys no
+# data; leaving one behind leaves a credential with the old shared password.
+for user in "${RETIRED_USERS[@]}"; do
+    if user_exists "${user}"; then
+        bashio::log.warning "Dropping retired user ${user} (no longer provisioned)"
+        influx_exec "drop retired user ${user}" "DROP USER ${user}"
+    fi
+done
 
-if [[ "${PER_USER}" == "true" ]]; then
-    # Pre-create the data-only databases so the least-privileged ga_default
-    # user never needs admin to CREATE them at first write.
-    create_database "gd_data"
-    create_database "pd_data"
+# Databases are NOT dropped, deliberately. ga_glances and ga_telegraf are no
+# longer created, but DROP DATABASE destroys data irreversibly and this script
+# runs unattended on every start — the wrong place for that. An empty database
+# costs nothing; a wrong DROP cannot be undone.
 
-    # Create/rotate every user with its DISTINCT password. Users are created
-    # WITHOUT admin here (plain CREATE USER); admin is granted explicitly below
-    # only where required, so the data users stay least-privilege.
-    for u in ga_ha_influx_user ga_default ga_telegraf; do
-        influx -execute "CREATE USER ${u} WITH PASSWORD '${USER_PW[$u]}'" &> /dev/null || \
-        influx -execute "SET PASSWORD FOR ${u} = '${USER_PW[$u]}'" &> /dev/null || true
-    done
-    for u in ga_influx_admin chronograf kapacitor; do
-        create_or_update_user "${u}" "${USER_PW[$u]}"
-    done
-
-    # Least-privilege grants for the data users; admin tooling stays admin.
-    influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
-    influx -execute "GRANT ALL ON gd_data TO ga_default" &> /dev/null || true
-    influx -execute "GRANT ALL ON pd_data TO ga_default" &> /dev/null || true
-    influx -execute "GRANT ALL ON ga_telegraf TO ga_telegraf" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
-else
-    # Legacy: every user shares the same password + ALL PRIVILEGES.
-    create_or_update_user "ga_influx_admin" "${USER_PW[ga_influx_admin]}"
-    create_or_update_user "ga_telegraf" "${USER_PW[ga_telegraf]}"
-    create_or_update_user "ga_ha_influx_user" "${USER_PW[ga_ha_influx_user]}"
-    create_or_update_user "chronograf" "${USER_PW[chronograf]}"
-    create_or_update_user "kapacitor" "${USER_PW[kapacitor]}"
-
-    influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO ga_telegraf" &> /dev/null || true
-    influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
-fi
-
-kill "$(pgrep influxd)" >/dev/null 2>&1
+bashio::log.info "InfluxDB provisioning complete: ${#USER_DBS[@]} consumers, per-database grants, no shared secret"

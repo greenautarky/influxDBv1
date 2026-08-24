@@ -1,0 +1,32 @@
+---
+name: Provisioning self-test
+
+# DELIBERATELY its own workflow, not a job in ci.yaml.
+#
+# ci.yaml delegates to an upstream reusable workflow, and when that call cannot
+# start, the whole file produces no jobs at all. A test living inside it would
+# then be a test nobody runs — and, worse, one that looks like it ran, because a
+# workflow that fails at startup leaves no red check behind. This repo spent at
+# least four days in exactly that state without anyone noticing.
+#
+# The subject here is the credential provisioning: which consumer gets which
+# password, which databases it may touch, and whether a rejected statement stops
+# the add-on. None of that is anything upstream's shared CI knows about.
+
+# yamllint disable-line rule:truthy
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provisioning:
+    name: Provisioning self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/provisioning/run-tests.sh

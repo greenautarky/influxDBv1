@@ -1,10 +1,9 @@
 ---
 name: ga_InfluxDBv1
-version: 0.0.7
+version: 1.0.0
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
-codenotary: thomas@greenautarky.com
 ingress: true
 ingress_port: 1337
 ingress_stream: true
@@ -18,30 +17,47 @@ arch:
   - armv7
 init: false
 map:
+  # share:rw is kept for ONE release, and for one reason: the provisioning step
+  # deletes the shared-secret file this add-on used to mirror there. Removing
+  # the mount in the same release would turn that deletion into a silent no-op
+  # on every already-deployed device. Scheduled for removal in 1.1.0 once the
+  # canaries confirm the file is gone.
   - share:rw
   - ssl
 ports:
+  # Nothing outside this device needs to reach InfluxDB directly. Consumers on
+  # the device reach it by its container name on the add-on network, which is
+  # what the credential manifest hands them — verified from Home Assistant
+  # Core's own network view, which resolves and reaches
+  # 99f1cad4-ga-influxdbv1:8086 without any host publish.
+  #
+  # 8088 in particular: in InfluxDB 1.x the RPC service used for backup and
+  # restore has NO authentication concept at all — `auth-enabled` covers the
+  # HTTP API on 8086 and nothing else. Publishing it on every host interface
+  # therefore offers a full database export to anything that can open the
+  # port, which is a much larger door than the one 8086 leaves ajar.
   80/tcp: null
-  8086/tcp: 8086
-  8088/tcp: 8088
+  8086/tcp: null
+  8088/tcp: null
 ports_description:
   80/tcp: Web interface (Not required for Ingress)
-  8086/tcp: InfluxDB server
-  8088/tcp: RPC service for backup and restore
+  8086/tcp: InfluxDB server (not published — reachable on the add-on network)
+  8088/tcp: RPC backup/restore (not published — unauthenticated by design in 1.x)
 auth_api: true
 options:
   auth: true
-  # Credential model for the on-device users. false (default) = legacy shared
-  # secret + ALL PRIVILEGES; true = distinct per-user least-privilege secrets
-  # exported addon-private to /data/influx-users.json for ga_manager delivery
-  # (ADR-0002/0003 device-local plane, Odoo #548). Ships default-false so this
-  # release is a no-op; the flip happens only after consumers are wired.
-  per_user_secrets: false
+  # NOTE: `per_user_secrets` is gone in 1.0.0. It selected between the shared
+  # secret and the per-consumer model; the shared secret no longer exists, so
+  # the flag had one setting left. One user per consumer is now the only mode,
+  # and the major version is the signal. Rolling back is a version pin, not a
+  # config toggle — which is the honest mechanism, because the two modes write
+  # different credentials and a toggle made that look reversible in place.
   reporting: true
   ssl: true
   certfile: fullchain.pem
   keyfile: privkey.pem
-  envvars: ## optimized for ressource constrained devices 
+  # optimized for resource-constrained devices
+  envvars:
     - name: INFLUXDB_REPORTING_DISABLED
       value: "true"
     - name: INFLUXDB_DATA_CACHE_MAX_MEMORY_SIZE
@@ -55,7 +71,6 @@ options:
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   auth: bool
-  per_user_secrets: bool?
   reporting: bool
   ssl: bool
   certfile: str

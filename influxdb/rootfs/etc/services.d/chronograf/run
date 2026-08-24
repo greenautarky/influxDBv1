@@ -14,7 +14,9 @@ s6-svwait -u -t 5000 /run/service//influxdb
 # Wait for Kapacitor to become available
 s6-svwait -u -t 5000 /run/service//kapacitor
 
-secret=$(</data/secret)
+# shellcheck source=/dev/null
+source /usr/lib/ga/influx-credentials.sh
+secret="$(ga_influx_password chronograf)"
 
 # Wait for InfluxDB...
 bashio::log.info "Chronograf is waiting until InfluxDB is available..."
@@ -40,8 +42,15 @@ options+=(--port=8889)
 options+=(--bolt-path=/data/chronograf.db)
 options+=(--influxdb-url="http://localhost:8086")
 
-options+=(--influxdb-username="chronograf")
-options+=(--influxdb-password="${secret}")
+# Credentials go through the environment, NOT argv. Chronograf documents both
+# (`--influxdb-username [$INFLUXDB_USERNAME]`, `--influxdb-password
+# [$INFLUXDB_PASSWORD]` — verified against the binary in this image, not
+# assumed), and this is the process that runs for the container's whole life,
+# so it is the one whose /proc/<pid>/cmdline is worth keeping clean. The
+# readiness probe above still passes -password: it is transient, and it must
+# prove that AUTHENTICATION works, not merely that the port answers.
+export INFLUXDB_USERNAME="chronograf"
+export INFLUXDB_PASSWORD="${secret}"
 options+=(--kapacitor-url="http://localhost:9092")
 
 # Find the matching Chronograph log level
