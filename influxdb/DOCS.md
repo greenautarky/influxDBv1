@@ -69,26 +69,36 @@ Enable or disable InfluxDB user authentication.
 
 **Note**: _Turning this off is NOT recommended!_
 
-### Option: `per_user_secrets`
+### Credentials — one user per consumer
 
-Selects the on-device credential model (GreenAutarky, ADR-0002/0003 —
-device-local plane; tracked in Odoo #548). Defaults to `false`.
+Every consumer of this InfluxDB gets **its own user, its own random password and
+grants on only the databases it uses**. There is no shared secret and nothing is
+written under `/share`.
 
-- `false` (default): legacy behaviour — all InfluxDB users share one password
-  derived from the Supervisor token and are granted `ALL PRIVILEGES`. The
-  shared secret is mirrored to `/share/influxdb_password.yaml`.
-- `true`: each user gets a **distinct random password**, persisted
-  addon-private in `/data/influx-users.json` (mode `0600`, reused across
-  restarts), with **least-privilege** grants for the data users
-  (`ga_ha_influx_user` → `ga_homeassistant_db`; `ga_default` →
-  `gd_data`/`pd_data`). The JSON manifest is the hand-off point for
-  `ga_manager`'s cross-addon credential delivery — nothing is written under
-  `/share`.
+| User | Databases | Read by |
+|---|---|---|
+| `ga_ha_influx_user` | `ga_homeassistant_db` | Home Assistant Core recorder |
+| `ga_default` | `gd_data`, `pd_data` | `ga_default_addon` |
+| `ga_influx_admin` | all (admin) | operator / maintenance |
+| `chronograf` | all (admin) | the bundled Chronograf UI |
+| `kapacitor` | all (admin) | the bundled Kapacitor |
 
-**Do not flip this to `true` until the consumers (default_addon, HA Core
-InfluxDB integration) are wired to receive their per-user credential** —
-otherwise, with `auth: true`, they will fail to authenticate. See the
-migration ordering in Odoo #548.
+The passwords live in `/data/influx-users.json` (mode `0600`, add-on private).
+That file is also the hand-off point: `ga_manager` reads it and delivers each
+consumer its own credential into that consumer's own add-on options.
+
+Passwords persist across restarts, because the consumers hold copies of them.
+**Rotating is therefore an explicit act:** delete `/data/influx-users.json`,
+restart the add-on, and re-run the delivery — regenerating on every start would
+silently break every consumer that had cached one.
+
+Before 1.0.0 all five users shared a single password derived from the Supervisor
+token, each with `ALL PRIVILEGES`, mirrored in clear text to
+`/share/influxdb_password.yaml` where every `share:rw` add-on could read it.
+1.0.0 removes both files on first start. There is no migration and no
+compatibility mode: the `per_user_secrets` option is gone, and rolling back is a
+version pin rather than a config toggle — the two models write different
+credentials, and a toggle made that look reversible in place when it is not.
 
 ### Option: `reporting`
 

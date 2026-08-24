@@ -4,9 +4,12 @@
 # Configures Kapacitor.conf
 # ==============================================================================
 
+# shellcheck source=/dev/null
+source /usr/lib/ga/influx-credentials.sh
+
 bashio::var.json \
     reporting "^$(bashio::config 'reporting')" \
-    secret "$(</data/secret)"\
+    secret "$(ga_influx_password kapacitor)"\
     | tempio \
         -template /etc/kapacitor/templates/kapacitor.gtpl \
         -out /etc/kapacitor/kapacitor.conf

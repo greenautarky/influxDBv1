@@ -14,3 +14,16 @@ on:
 jobs:
   workflows:
     uses: hassio-addons/workflows/.github/workflows/addon-ci.yaml@main
+
+  # The provisioning script decides which consumer gets which credential and
+  # which databases it may touch. Upstream's shared CI lints the add-on; it
+  # knows nothing about that logic. This runs the fixtures against the LIVE
+  # script on every change, so the consumer table, the least-privilege grants
+  # and the fail-closed behaviour cannot regress unnoticed.
+  provisioning:
+    name: Provisioning self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/provisioning/run-tests.sh
