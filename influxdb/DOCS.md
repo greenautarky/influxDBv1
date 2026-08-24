@@ -75,13 +75,13 @@ Every consumer of this InfluxDB gets **its own user, its own random password and
 grants on only the databases it uses**. There is no shared secret and nothing is
 written under `/share`.
 
-| User | Databases | Read by |
-|---|---|---|
+| User                | Databases             | Read by                      |
+| ------------------- | --------------------- | ---------------------------- |
 | `ga_ha_influx_user` | `ga_homeassistant_db` | Home Assistant Core recorder |
-| `ga_default` | `gd_data`, `pd_data` | `ga_default_addon` |
-| `ga_influx_admin` | all (admin) | operator / maintenance |
-| `chronograf` | all (admin) | the bundled Chronograf UI |
-| `kapacitor` | all (admin) | the bundled Kapacitor |
+| `ga_default`        | `gd_data`, `pd_data`  | `ga_default_addon`           |
+| `ga_influx_admin`   | all (admin)           | operator / maintenance       |
+| `chronograf`        | all (admin)           | the bundled Chronograf UI    |
+| `kapacitor`         | all (admin)           | the bundled Kapacitor        |
 
 The passwords live in `/data/influx-users.json` (mode `0600`, add-on private).
 That file is also the hand-off point: `ga_manager` reads it and delivers each
