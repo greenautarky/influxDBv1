@@ -1,3 +1,4 @@
+---
 name: store-sync-verify
 
 # The Supervisor does NOT read this repo's config.yaml — it reads the copy in
@@ -31,6 +32,7 @@ name: store-sync-verify
 #   PR — it catches drift that exists TODAY, which is the drift that ships — and
 #   it reports what the PR will change as information rather than as a failure.
 
+# yamllint disable-line rule:truthy
 on:
   push:
     branches: [main]
@@ -72,10 +74,14 @@ jobs:
             git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
             mkdir -p /tmp/base
             if ! git show "origin/${{ github.base_ref }}:influxdb/config.yaml" > /tmp/base/config.yaml; then
-              echo "::error::could not read influxdb/config.yaml from origin/${{ github.base_ref }} — the comparison could not run, which is NOT a pass"
+              echo "::error::could not read influxdb/config.yaml from"
+              echo "::error::origin/${{ github.base_ref }} — the comparison could not run, which is NOT a pass"
               exit 1
             fi
-            [ -s /tmp/base/config.yaml ] || { echo "::error::base config.yaml is empty — refusing to compare against nothing"; exit 1; }
+            [ -s /tmp/base/config.yaml ] || {
+              echo "::error::base config.yaml is empty — refusing to compare against nothing"
+              exit 1
+            }
             echo "path=/tmp/base/config.yaml" >> "$GITHUB_OUTPUT"
             echo "Comparing the store against origin/${{ github.base_ref }} (the state that is live today)."
           else

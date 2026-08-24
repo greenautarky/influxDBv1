@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015
+# ^ file-wide, and it has to sit HERE: a disable directive placed after the
+#   first command applies only to that command, which is how thirteen of these
+#   reached CI. ok() and bad() both always return 0, so `A && ok || bad` cannot
+#   run both branches.
 # Self-test for the LIVE provisioning script.
 #
 # It sources influxdb/rootfs/etc/cont-init.d/00_create-db_and_users.sh — the
@@ -10,7 +15,6 @@
 # The SUBJECT — the consumer table, the manifest, the grants, the fail-closed
 # behaviour — is never stubbed.
 set -uo pipefail
-# shellcheck disable=SC2015  # ok()/bad() always return 0, so `A && ok || bad` is safe here
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${HERE}/../.." && pwd)"

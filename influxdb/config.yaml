@@ -57,7 +57,8 @@ options:
   ssl: true
   certfile: fullchain.pem
   keyfile: privkey.pem
-  envvars: ## optimized for ressource constrained devices 
+  # optimized for resource-constrained devices
+  envvars:
     - name: INFLUXDB_REPORTING_DISABLED
       value: "true"
     - name: INFLUXDB_DATA_CACHE_MAX_MEMORY_SIZE
