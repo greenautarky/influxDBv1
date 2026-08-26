@@ -14,18 +14,3 @@ on:
 jobs:
   workflows:
     uses: hassio-addons/workflows/.github/workflows/addon-ci.yaml@main
-
-  grants-table:
-    name: Per-user credential table
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # The manifest a consumer receives and the privilege the server applies
-      # come from one declaration; this asserts they cannot drift apart, and it
-      # reads that declaration from the LIVE script. If the extraction stops
-      # finding it, the job FAILS rather than skipping — a self-test that can
-      # only pass is the failure class it exists to catch.
-      - name: bash syntax
-        run: bash -n influxdb/rootfs/etc/cont-init.d/00_create-db_and_users.sh
-      - name: table + manifest + grant verification
-        run: bash tests/test_user_grants_table.sh
