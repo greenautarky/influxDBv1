@@ -69,13 +69,34 @@ provision_legacy_secret() {
     done
 }
 
+# ─── Who may touch what: ONE declaration ────────────────────────────────────
+# Read by the manifest writer, the database creation, the GRANT block and the
+# verification below. Previously the manifest listed a user's databases and the
+# GRANT block granted them, separately — two sources for one truth, which can
+# only ever agree by hand. A consumer whose manifest entry and server-side
+# privilege disagree authenticates successfully and is then refused on every
+# request, which is the hardest shape of this failure to see.
+#
+# Databases are what each consumer is CONFIGURED for (its own add-on options),
+# not a guess at what it uses. Narrowing any of these from read/write to
+# read-only is a second step and needs a measurement, not an assumption: the
+# server's access log tells us which (user, database) pairs ever POST /write.
+declare -A USER_DBS=(
+    [ga_ha_influx_user]="ga_homeassistant_db"
+    [ga_default]="ga_homeassistant_db gd_data pd_data"
+    [ga_hmvapp]="ga_homeassistant_db gd_data"
+    [ga_telegraf]="ga_telegraf"
+)
+DATA_USERS="ga_ha_influx_user ga_default ga_hmvapp ga_telegraf"
+ADMIN_USERS="ga_influx_admin chronograf kapacitor"
+
 # ─── Per-user distinct-secret mode (target) ──────────────────────────────────
 # Passwords persist in /data/influx-users.json so they are stable across
 # restarts (a rotation = delete the file). Reuse existing values; generate
 # only the missing ones so adding a user later doesn't churn the others.
 provision_per_user_secrets() {
     local u existing
-    for u in ga_influx_admin ga_ha_influx_user ga_default ga_telegraf chronograf kapacitor; do
+    for u in ${ADMIN_USERS} ${DATA_USERS}; do
         existing=""
         if bashio::fs.file_exists "${USERS_JSON}"; then
             existing="$(jq -r --arg u "$u" '.users[$u].password // empty' "${USERS_JSON}" 2>/dev/null)"
@@ -96,33 +117,64 @@ provision_per_user_secrets() {
 # delivery. Scopes describe the least-privilege grant applied below so the
 # delivery layer can route each consumer its own credential.
 write_users_json() {
-    local tmp
+    local tmp users u dbs
     tmp="$(mktemp)"
-    jq -n \
-        --arg host "${INFLUX_HOST}" \
-        --argjson port "${INFLUX_PORT}" \
-        --arg ha_pw "${USER_PW[ga_ha_influx_user]}" \
-        --arg def_pw "${USER_PW[ga_default]}" \
-        --arg admin_pw "${USER_PW[ga_influx_admin]}" \
-        --arg tel_pw "${USER_PW[ga_telegraf]}" \
-        --arg chr_pw "${USER_PW[chronograf]}" \
-        --arg kap_pw "${USER_PW[kapacitor]}" \
-        '{
-          version: 1,
-          host: $host,
-          port: $port,
-          users: {
-            ga_ha_influx_user: { password: $ha_pw,    databases: ["ga_homeassistant_db"], scope: "rw" },
-            ga_default:        { password: $def_pw,   databases: ["gd_data","pd_data"],   scope: "rw" },
-            ga_influx_admin:   { password: $admin_pw, databases: [],                       scope: "admin" },
-            ga_telegraf:       { password: $tel_pw,   databases: ["ga_telegraf"],          scope: "rw" },
-            chronograf:        { password: $chr_pw,   databases: [],                       scope: "admin" },
-            kapacitor:         { password: $kap_pw,   databases: [],                       scope: "admin" }
-          }
-        }' > "${tmp}"
+    users="{}"
+
+    for u in ${DATA_USERS}; do
+        # Word splitting is the list format here.
+        # shellcheck disable=SC2086
+        dbs="$(printf '%s\n' ${USER_DBS[$u]} | jq -R . | jq -s -c .)"
+        users="$(jq -c --arg u "$u" --arg pw "${USER_PW[$u]}" \
+                       --argjson dbs "${dbs}" \
+                    '.[$u] = {password: $pw, databases: $dbs, scope: "rw"}' \
+                    <<<"${users}")"
+    done
+    for u in ${ADMIN_USERS}; do
+        users="$(jq -c --arg u "$u" --arg pw "${USER_PW[$u]}" \
+                    '.[$u] = {password: $pw, databases: [], scope: "admin"}' \
+                    <<<"${users}")"
+    done
+
+    jq -n --arg host "${INFLUX_HOST}" --argjson port "${INFLUX_PORT}" \
+          --argjson users "${users}" \
+        '{version: 1, host: $host, port: $port, users: $users}' > "${tmp}"
     install -m 0600 "${tmp}" "${USERS_JSON}"
     rm -f "${tmp}"
-    bashio::log.info "Wrote per-user credential manifest ${USERS_JSON} (0600)"
+    # Names, never values. The count is what makes a truncated manifest visible.
+    bashio::log.info "Wrote per-user credential manifest ${USERS_JSON} (0600): \
+$(jq -r '.users | keys | length' "${USERS_JSON}") users — \
+$(jq -r '.users | keys | join(", ")' "${USERS_JSON}")"
+}
+
+# Confirm the server actually applied what the manifest promises. A GRANT that
+# silently did not land leaves a consumer able to authenticate and refused on
+# every request — the add-on starts, connects, and writes nothing.
+verify_grants() {
+    local u db shown missing=0 checked=0
+    for u in ${DATA_USERS}; do
+        shown="$(influx -execute "SHOW GRANTS FOR ${u}" 2>/dev/null)"
+        # shellcheck disable=SC2086
+        for db in ${USER_DBS[$u]}; do
+            checked=$((checked + 1))
+            if ! grep -qE "(^|[[:space:]])${db}([[:space:]]|$)" <<<"${shown}"; then
+                bashio::log.error "MISSING GRANT: ${u} has no privilege on ${db}"
+                missing=$((missing + 1))
+            fi
+        done
+    done
+    # Coverage, not exit code: a verification that inspected nothing is a
+    # failure wearing the colour of success.
+    if [ "${checked}" -eq 0 ]; then
+        bashio::log.error "grant verification inspected ZERO pairs — the user/database table is empty"
+        return
+    fi
+    if [ "${missing}" -gt 0 ]; then
+        bashio::log.error "${missing} of ${checked} required grants are missing; \
+those consumers will authenticate and then be refused on every request"
+    else
+        bashio::log.info "Verified ${checked} user/database grants"
+    fi
 }
 
 PER_USER=false
@@ -194,30 +246,41 @@ create_database "ga_glances"
 set_retention_policy "ga_glances" "7d"
 
 if [[ "${PER_USER}" == "true" ]]; then
-    # Pre-create the data-only databases so the least-privileged ga_default
-    # user never needs admin to CREATE them at first write.
-    create_database "gd_data"
-    create_database "pd_data"
+    # Pre-create every database named in the table, so a least-privileged
+    # consumer never needs admin to CREATE one at its first write. Derived
+    # from USER_DBS rather than listed again: a database added to a user's row
+    # and forgotten here is a 404 on that consumer's first request.
+    for db in $(printf '%s\n' "${USER_DBS[@]}" | tr ' ' '\n' | sort -u); do
+        create_database "${db}"
+    done
 
-    # Create/rotate every user with its DISTINCT password. Users are created
-    # WITHOUT admin here (plain CREATE USER); admin is granted explicitly below
-    # only where required, so the data users stay least-privilege.
-    for u in ga_ha_influx_user ga_default ga_telegraf; do
+    # Create/rotate every user with its DISTINCT password. Data users are
+    # created WITHOUT admin here (plain CREATE USER); admin is granted
+    # explicitly below only to the tooling accounts that need it.
+    for u in ${DATA_USERS}; do
         influx -execute "CREATE USER ${u} WITH PASSWORD '${USER_PW[$u]}'" &> /dev/null || \
         influx -execute "SET PASSWORD FOR ${u} = '${USER_PW[$u]}'" &> /dev/null || true
     done
-    for u in ga_influx_admin chronograf kapacitor; do
+    for u in ${ADMIN_USERS}; do
         create_or_update_user "${u}" "${USER_PW[$u]}"
     done
 
-    # Least-privilege grants for the data users; admin tooling stays admin.
-    influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
-    influx -execute "GRANT ALL ON gd_data TO ga_default" &> /dev/null || true
-    influx -execute "GRANT ALL ON pd_data TO ga_default" &> /dev/null || true
-    influx -execute "GRANT ALL ON ga_telegraf TO ga_telegraf" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
+    # Least-privilege grants, straight from the table above. A failure here is
+    # reported: it is the difference between a consumer that works and one
+    # that authenticates and is then refused on every request.
+    for u in ${DATA_USERS}; do
+        # shellcheck disable=SC2086
+        for db in ${USER_DBS[$u]}; do
+            influx -execute "GRANT ALL ON ${db} TO ${u}" &> /dev/null || \
+                bashio::log.error "GRANT ALL ON ${db} TO ${u} failed"
+        done
+    done
+    for u in ${ADMIN_USERS}; do
+        influx -execute "GRANT ALL PRIVILEGES TO ${u}" &> /dev/null || \
+            bashio::log.error "GRANT ALL PRIVILEGES TO ${u} failed"
+    done
+
+    verify_grants
 else
     # Legacy: every user shares the same password + ALL PRIVILEGES.
     create_or_update_user "ga_influx_admin" "${USER_PW[ga_influx_admin]}"
