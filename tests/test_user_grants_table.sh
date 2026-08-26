@@ -54,6 +54,32 @@ STUB_LOG=()
 # shellcheck disable=SC1090
 source /dev/stdin <<<"${PREAMBLE}"
 
+echo "== every helper survives bashio's errexit + pipefail =="
+# THE CHECK THAT WOULD HAVE CAUGHT IT.
+#
+# bashio runs cont-init scripts with `errexit`, `nounset` and `pipefail`. Under
+# those flags a pipeline whose LAST stage exits early — `… | head -c 32` — kills
+# the script, because the upstream stage takes SIGPIPE and pipefail reports 141
+# even though the output was produced correctly.
+#
+# gen_password did exactly that, and it is called ONLY in per-user mode, so no
+# amount of running the add-on in its default configuration could find it. The
+# first time the flag was enabled anywhere, InfluxDB crash-looped and the data
+# plane went down. A branch that has never executed is not tested by anything.
+#
+# So every helper is called here under the same flags the container uses, and
+# its exit status is asserted — not just its output.
+for fn in gen_password; do
+    out="$(bash -o pipefail -o errexit -c "
+        $(sed -n "/^${fn}()/,/^}/p" "${TARGET}")
+        ${fn}
+    " 2>/dev/null)"; rc=$?
+    check "${fn} exits 0 under errexit+pipefail" "${rc}" "0"
+    [ "${#out}" -ge 16 ] \
+        && ok "${fn} still produces a usable value (${#out} chars)" \
+        || bad "${fn} still produces a usable value" "got ${#out} chars"
+done
+
 echo "== the table itself =="
 
 # Every data user has a row, every row belongs to a data user. Two lists that
