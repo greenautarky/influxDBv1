@@ -243,7 +243,14 @@ jobs:
   sync-downstream:
     needs: build
     if: github.ref_name == github.event.repository.default_branch
-    uses: greenautarky/ga-ops/.github/workflows/addon-store-lockstep.yml@main
+    # NOT ga-ops. That repository is PRIVATE and this one is PUBLIC, and a
+    # public caller cannot resolve a reusable workflow in a private repo —
+    # `access_level: organization` does not change it. The call failed as
+    # `workflow was not found` with ZERO jobs, zero check-runs and no log,
+    # which is not a shape anyone reads as "unreachable file", and which does
+    # not show as a red check on a pull request either. This add-on could not
+    # publish at all from 2026-08-24 until it was found on 2026-08-26.
+    uses: greenautarky/vibe_addons/.github/workflows/addon-store-lockstep.yml@main
     with:
       addon_dir: influxdb
       addon_slug: ga_influxdbv1
