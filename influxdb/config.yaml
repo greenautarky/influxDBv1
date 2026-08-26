@@ -34,14 +34,14 @@ options:
   # Credential model for the on-device users. false (default) = legacy shared
   # secret + ALL PRIVILEGES; true = distinct per-user least-privilege secrets
   # exported addon-private to /data/influx-users.json for ga_manager delivery
-  # (ADR-0002/0003 device-local plane, Odoo #548). Ships default-false so this
+  # (ADR-0002/0003 device-local plane, Odoo  # 548). Ships default-false so this
   # release is a no-op; the flip happens only after consumers are wired.
   per_user_secrets: false
   reporting: true
   ssl: true
   certfile: fullchain.pem
   keyfile: privkey.pem
-  envvars: ## optimized for ressource constrained devices 
+  envvars:  #  # optimized for ressource constrained devices
     - name: INFLUXDB_REPORTING_DISABLED
       value: "true"
     - name: INFLUXDB_DATA_CACHE_MAX_MEMORY_SIZE

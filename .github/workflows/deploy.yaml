@@ -2,7 +2,7 @@
 name: Deploy
 
 # yamllint disable-line rule:truthy
-on:
+"on":
   release:
     types:
       - published

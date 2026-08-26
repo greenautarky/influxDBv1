@@ -1,11 +1,15 @@
+---
 name: Build & Push (GHCR) - ga_influxdbv1
 
-on:
+"on":
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - "influxdb/**"
-      - ".github/workflows/publish.yml"
+      # .yml, not .yaml — this file. A change to the publish workflow itself
+      # therefore never triggered it, which is the class of defect where a
+      # gate cannot fire on the change that broke it.
+      - ".github/workflows/publish.yaml"
   workflow_dispatch:
 
 permissions:
@@ -62,11 +66,11 @@ jobs:
         run: |
           set -euo pipefail
           f="${{ env.ADDON_DIR }}/config.yaml"
-      
+
           echo ">>> Looking for 'version:' in $f"
           # Show any version lines (for debugging)
           grep -n -i '^[[:space:]]*version[[:space:]]*:' "$f" || true
-      
+
           # Robust extract: take the first 'version:' key, strip comments/quotes/space
           ver=$(
             awk 'BEGIN{IGNORECASE=1}
@@ -78,13 +82,13 @@ jobs:
                 print; exit
               }' "$f"
           )
-      
-          if [ -z "${ver:-}" ]; then
+
+          if [-z "${ver:-}"]; then
             echo "::error::Could not read version from $f"
             echo "First 30 lines for inspection:"; nl -ba "$f" | sed -n '1,30p'
             exit 1
           fi
-      
+
           echo "Detected add-on version: $ver"
           echo "value=$ver" >> "$GITHUB_OUTPUT"
 
@@ -215,12 +219,12 @@ jobs:
           tags="${{ steps.meta.outputs.tags }}"
           pushed=0
           while IFS= read -r t; do
-            [ -z "$t" ] && continue
+            [-z "$t"] && continue
             docker tag local/ga_influxdbv1:scan "$t"
             docker push "$t"
             pushed=$((pushed + 1))
           done <<< "$tags"
-          if [ "$pushed" -eq 0 ]; then
+          if ["$pushed" -eq 0]; then
             echo "::error::no tags resolved from metadata-action — nothing was pushed"
             exit 1
           fi

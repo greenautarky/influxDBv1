@@ -24,6 +24,17 @@ ARG KAPACITOR_VERSION="1.5.9-1"
 # Same symptom as the four Alpine add-ons, different mechanism — which is why
 # the Alpine form of this fix was wrong here and broke the build twice before
 # anyone measured which distro this add-on actually uses.
+# DL3008 wants every apt package pinned to a version. For this image that rule
+# is precisely backwards: a pinned package is a package that stops receiving
+# security updates, and the CVE gate then blocks the push on it. That is not
+# hypothetical — it is what happened on 2026-08-26, and the fix was to STOP
+# pinning (see the note above `apt-get upgrade`). The Alpine sibling add-ons
+# had the same problem in the form of exact constraints in /etc/apk/world.
+#
+# SC3009 flags brace expansion as undefined in POSIX sh. This Dockerfile sets
+# SHELL to /bin/bash three lines up, so it is not POSIX sh; hadolint does not
+# carry that context across.
+# hadolint ignore=DL3008,SC3009
 RUN \
     apt-get update \
     && apt-get upgrade -y \
