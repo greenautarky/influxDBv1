@@ -33,8 +33,37 @@ INFLUX_PORT=8086
 
 # Alphanumeric only → safe inside InfluxQL single-quoted strings and in the
 # plain sed/`!secret` extraction consumers use (no quoting needed downstream).
+#
+# THIS FUNCTION USED TO KILL THE ADD-ON, AND ONLY IN PER-USER MODE.
+#
+# It was `tr -dc … < /dev/urandom | head -c 32`. `head` exits after 32 bytes and
+# closes the pipe; `tr`, still reading an infinite file, takes SIGPIPE and the
+# pipeline exits 141. The password is produced correctly — only the status is
+# wrong — and bashio runs with `errexit` and `pipefail`, so cont-init died on
+# the first call:
+#
+#   /etc/cont-init.d/00_create-db_and_users.sh exited 141
+#   s6-rc: warning: unable to start service legacy-cont-init
+#   rc.init: fatal: stopping the container
+#
+# Measured on a bench device 2026-08-26, the first time per_user_secrets was
+# ever enabled anywhere: InfluxDB crash-looped and the data plane was down
+# until the flag was turned back off.
+#
+# It could not have been found any earlier by running the add-on, because
+# gen_password is called ONLY in per-user mode — the legacy path derives its
+# secret from the Supervisor token. A branch that has never executed is not
+# tested by anything, however green the suite is.
+#
+# `head -c` on a BOUNDED source cannot do this: head reads 256 bytes and exits,
+# tr sees EOF and exits 0. The loop keeps it deterministic — 256 random bytes
+# yield ~150 alphanumerics on average, but "on average" is not a guarantee.
 gen_password() {
-    tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32
+    local out=""
+    while [ "${#out}" -lt 32 ]; do
+        out="${out}$(head -c 256 /dev/urandom | tr -dc 'a-zA-Z0-9')"
+    done
+    printf '%s' "${out:0:32}"
 }
 
 declare -A USER_PW
