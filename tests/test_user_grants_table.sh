@@ -80,6 +80,49 @@ for fn in gen_password; do
         || bad "${fn} still produces a usable value" "got ${#out} chars"
 done
 
+echo "== nothing the provisioning removes is read by a sibling script =="
+# THE CHECK THAT WOULD HAVE CAUGHT THE SECOND ONE.
+#
+# The per-user branch deleted /data/secret, on sound reasoning: a shared secret
+# should not linger once per-user mode is on. Three sibling scripts read that
+# file — cont-init.d/kapacitor.sh, services.d/kapacitor/run,
+# services.d/chronograf/run — so cont-init died and s6 stopped the container.
+#
+# The class is "one script removes an artefact another one depends on", and it
+# is invisible in review because the two live in different files. So: every
+# path this script deletes is checked against every path the rootfs reads.
+ROOTFS="${SCRIPT_DIR}/../influxdb/rootfs"
+[ -d "${ROOTFS}" ] || { echo "FATAL: rootfs not found at ${ROOTFS}"; exit 1; }
+
+deleted="$(grep -oE 'rm -f +(/[A-Za-z0-9_./-]+)' "${TARGET}" | awk '{print $NF}' | sort -u)"
+checked_paths=0
+for path in ${deleted}; do
+    checked_paths=$((checked_paths + 1))
+    readers="$(grep -rlF "${path}" "${ROOTFS}/etc" 2>/dev/null \
+                | grep -v '00_create-db_and_users' || true)"
+    if [ -n "${readers}" ]; then
+        bad "provisioning deletes ${path}, which is still read" \
+            "$(echo "${readers}" | sed "s|${ROOTFS}||" | tr '\n' ' ')"
+    else
+        ok "nothing else reads ${path}"
+    fi
+done
+# "No deletions" and "the extractor is broken" are different facts, and the
+# first one is legitimate — this branch deletes nothing today. So the EXTRACTOR
+# is proven against a fixture instead of inferred from the real count.
+_fixture="$(mktemp)"; printf 'foo\nrm -f /data/decoy-path\nbar\n' > "${_fixture}"
+_found="$(grep -oE 'rm -f +(/[A-Za-z0-9_./-]+)' "${_fixture}" | awk '{print $NF}')"
+rm -f "${_fixture}"
+check "the deletion extractor still works (must-fail fixture)" "${_found}" "/data/decoy-path"
+ok "real deletions in the provisioning script: ${checked_paths}"
+
+# And the must-fail half on the real subject: a path the rootfs reads must be
+# reported if the script ever deletes it again.
+_readers="$(grep -rlF '/data/secret' "${ROOTFS}/etc" 2>/dev/null | grep -vc '00_create-db' || echo 0)"
+[ "${_readers}" -ge 1 ] \
+    && ok "/data/secret still has ${_readers} reader(s) — so deleting it would be caught" \
+    || bad "/data/secret has readers" "none found; the guard above would be vacuous"
+
 echo "== the table itself =="
 
 # Every data user has a row, every row belongs to a data user. Two lists that

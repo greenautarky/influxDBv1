@@ -136,10 +136,39 @@ provision_per_user_secrets() {
             USER_PW[$u]="$(gen_password)"
         fi
     done
+    # chronograf and kapacitor read their password from /data/secret — three
+    # places do: cont-init.d/kapacitor.sh, services.d/kapacitor/run and
+    # services.d/chronograf/run. This branch used to DELETE that file, on the
+    # reasoning that a shared secret must not linger once per-user mode is on.
+    # The reasoning is right and the consequence was fatal: cont-init died with
+    #
+    #   /etc/cont-init.d/kapacitor.sh: line 8: /data/secret: No such file or directory
+    #   s6-rc: unable to start service legacy-cont-init  ->  container stopped
+    #
+    # Measured on a bench device 2026-08-26, the second time per_user_secrets
+    # was ever enabled anywhere. Like the SIGPIPE before it, it could not have
+    # been found by running the add-on: this branch has never executed.
+    #
+    # So the file stays, and it now holds ONE secret used by exactly the two
+    # internal tools that read it. That is a deliberate, stated compromise:
+    #
+    #   the DATA users — ga_ha_influx_user, ga_default, ga_hmvapp, ga_telegraf —
+    #   each get a distinct password and a least-privilege grant, which is the
+    #   whole point of this mode;
+    #   ga_influx_admin gets its own distinct password and is not in this file;
+    #   chronograf and kapacitor share one, because rewiring three scripts to
+    #   read a manifest is a separate change and this one is already fixing a
+    #   container that would not start.
+    #
+    # Even so it is strictly narrower than legacy mode, where all six share one
+    # password AND all six hold ALL PRIVILEGES.
+    USER_PW[chronograf]="$(gen_password)"
+    USER_PW[kapacitor]="${USER_PW[chronograf]}"
+    printf '%s\n' "${USER_PW[chronograf]}" > /data/secret
+    chmod 600 /data/secret
+    bashio::log.info "Wrote /data/secret for the internal tools (chronograf, kapacitor)"
+
     write_users_json
-    # A stale shared-secret file must not linger as a real credential once we
-    # are in per-user mode (auth is enforced against the per-user passwords).
-    bashio::fs.file_exists "/data/secret" && rm -f /data/secret
 }
 
 # Emit the addon-private hand-off file consumed by ga_manager's cross-addon
