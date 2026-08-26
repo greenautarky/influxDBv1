@@ -10,6 +10,25 @@ ARG BUILD_ARCH
 ARG INFLUXDB_VERSION="1.8.10"
 ARG CHRONOGRAF_VERSION="1.10.2"
 ARG KAPACITOR_VERSION="1.5.9-1"
+# THE PINS ARE THE PROBLEM, NOT THE FROZEN TAG.
+#
+# The base writes EXACT version constraints into /etc/apk/world (libcrypto3,
+# libssl3, musl, curl, bash, jq, tzdata). A world constraint is precisely what
+# apk must not upgrade past, so a plain `apk upgrade` is a no-op for exactly
+# the packages that carry the CVEs — `apk policy libcrypto3` reports the fixed
+# version as available and apk still refuses it. Relax the constraints first,
+# then upgrade. The Alpine BRANCH stays pinned, so this takes patch-level
+# security updates and never a distro jump.
+#
+# Measured on the pinned base, 2026-08-26: 2 fixable HIGH before (libcrypto3 +
+# libssl3 3.5.7-r0, CVE-2026-14456), 0 after. The identical two on our own
+# armv7 base — and "use a newer base" is not an option that exists for armv7,
+# which upstream froze at 18.2.1 when 19.0.0 dropped the arch.
+#
+# hadolint ignore=DL3017,DL3018
+RUN sed -i 's/=[0-9][^[:space:]]*//g' /etc/apk/world \
+  && apk --no-cache upgrade
+
 RUN \
     apt-get update \
     && apt-get install -y --no-install-recommends \
