@@ -10,8 +10,23 @@ ARG BUILD_ARCH
 ARG INFLUXDB_VERSION="1.8.10"
 ARG CHRONOGRAF_VERSION="1.10.2"
 ARG KAPACITOR_VERSION="1.5.9-1"
+# `apt-get upgrade` before the installs. The Debian base we own pins nothing —
+# unlike the Alpine bases, whose constraints live in /etc/apk/world — but it is
+# BUILT once and then sits: openssl was current the day it was made and is not
+# today. The CVE gate blocks the push on exactly that:
+#
+#   libssl3t64, openssl, openssl-provider-legacy
+#   3.5.6-1~deb13u2  ->  3.5.7-1~deb13u2   CVE-2026-14456
+#
+# Measured on ghcr.io/greenautarky/ga-addon-debian-base-amd64:trixie,
+# 2026-08-26: 3 fixable HIGH before, 0 after.
+#
+# Same symptom as the four Alpine add-ons, different mechanism — which is why
+# the Alpine form of this fix was wrong here and broke the build twice before
+# anyone measured which distro this add-on actually uses.
 RUN \
     apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         libnginx-mod-http-lua \
         luarocks \
