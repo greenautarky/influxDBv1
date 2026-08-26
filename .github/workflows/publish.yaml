@@ -246,6 +246,19 @@ jobs:
   # never reports success for a sync it did not do.
   sync-downstream:
     needs: build
+    # The called workflow declares `contents: write` — it pushes the store
+    # entry — and a called workflow can never hold more permission than its
+    # caller. This file granted `contents: read` at the workflow level, so the
+    # run could not be CREATED at all: no jobs, no checks, no log, and the
+    # publish simply did not happen. Measured 2026-08-26, immediately after the
+    # reusable workflow gained that declaration.
+    #
+    # Granted per JOB, not raised at the workflow level, so the build jobs keep
+    # read-only contents. The token here is scoped to THIS repository; the push
+    # to the store still uses the caller's PAT on this path.
+    permissions:
+      contents: write
+      packages: read
     if: github.ref_name == github.event.repository.default_branch
     # NOT ga-ops. That repository is PRIVATE and this one is PUBLIC, and a
     # public caller cannot resolve a reusable workflow in a private repo —
