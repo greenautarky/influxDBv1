@@ -1,16 +1,110 @@
 ---
 name: CI
 
-# yamllint disable-line rule:truthy
+# OUR OWN LINTERS, NOT THE UPSTREAM REUSABLE WORKFLOW.
+#
+# This file used to call hassio-addons/workflows/.github/workflows/app-ci.yaml.
+# That call never started once in the repository's recorded history — 48
+# startup_failure, 23 failure, zero successes over 100 runs back to 2025-10-08,
+# because the caller declared no `permissions` and the called workflow wants
+# `security-events: write`. Ten months with no linting, and no pull request was
+# ever red for it.
+#
+# Granting the permission made it run, and running it showed that TWO of its
+# jobs cannot pass on this fork at all:
+#
+#   Lint App   errors with "App version identifier must be 'dev'". Upstream
+#              keeps `version: dev` in the repository and stamps the real
+#              version at release time. We keep the real version in
+#              config.yaml because the store lockstep and the bake pin read it.
+#              The check is incompatible with our release model, not with our
+#              code.
+#
+#   Shellcheck exits 1 in twelve milliseconds having printed no finding at all.
+#              Locally, every file with a shell shebang is clean under the same
+#              tool. Whatever it is checking, it is not our shell.
+#
+# A gate that cannot go green teaches people to ignore its colour, and two of
+# them in a shared workflow we do not control is not a position worth
+# defending. So the checks run here, explicitly, and each one can be reasoned
+# about. armv7 also draws an upstream deprecation warning on every run — the
+# fleet is hardware-locked to it, which is exactly why we build our own bases.
+
 "on":
   push:
   pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  workflows:
-    uses: hassio-addons/workflows/.github/workflows/addon-ci.yaml@main
+  hadolint:
+    name: Hadolint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker run --rm -i hadolint/hadolint:latest hadolint - < influxdb/Dockerfile
+
+  yamllint:
+    name: YAMLLint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet yamllint
+      - run: yamllint --strict .
+
+  prettier:
+    name: Prettier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx --yes prettier@3.9.6 --check "**/*.{yaml,yml,json,md}"
+
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Every file with a shell shebang, found rather than listed — a listed
+      # set silently stops covering the file somebody adds next. Fails closed
+      # on zero: a scan that inspected nothing is not a pass.
+      - name: Shellcheck every shell file
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(
+            find . -path ./.git -prune -o -type f -print \
+            | while read -r f; do
+                head -c 80 "$f" 2>/dev/null | head -1 \
+                  | grep -qE '^#!.*(bash|sh|bashio)' && echo "$f"
+              done
+          )
+          echo "found ${#files[@]} shell file(s)"
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no shell files found — this check inspected nothing"
+            exit 1
+          fi
+          rc=0
+          for f in "${files[@]}"; do
+            shellcheck -x -s bash "$f" || rc=1
+          done
+          exit "$rc"
+
+  json:
+    name: JSON
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every JSON file parses
+        run: |
+          set -euo pipefail
+          n=0
+          while read -r f; do
+            jq empty "$f" || exit 1
+            n=$((n + 1))
+          done < <(find . -path ./.git -prune -o -name '*.json' -print)
+          echo "parsed ${n} JSON file(s)"
+          [ "$n" -gt 0 ] || { echo "::error::no JSON files inspected"; exit 1; }

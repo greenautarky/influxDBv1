@@ -288,9 +288,14 @@ set_retention_policy() {
 create_or_update_user() {
     local user="$1"
     local password="$2"
-    influx -execute "SHOW USERS" | grep -q "^${user}" && \
-        bashio::log.info "Updating password for user ${user}" || \
+    # if/else, not `A && B || C`. In that form C also runs when B fails, and
+    # while a log call is unlikely to fail, this is the shape that has produced
+    # real defects here — it is not worth keeping for three saved characters.
+    if influx -execute "SHOW USERS" | grep -q "^${user}"; then
+        bashio::log.info "Updating password for user ${user}"
+    else
         bashio::log.info "Creating user ${user}"
+    fi
     influx -execute "CREATE USER ${user} WITH PASSWORD '${password}' WITH ALL PRIVILEGES" &> /dev/null || \
     influx -execute "SET PASSWORD FOR ${user} = '${password}'" &> /dev/null || true
 }
