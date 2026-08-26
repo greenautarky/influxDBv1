@@ -11,6 +11,21 @@ name: CI
       - synchronize
   workflow_dispatch:
 
+# The reusable workflow called below declares `security-events: write`. A
+# called workflow can never hold more permission than its caller, and this
+# caller declared none — so it inherited the repository default (read) and
+# every run died before a single step, as `startup_failure`.
+#
+# That does not surface as a red check on a pull request, which is why it went
+# unnoticed. Measured over the last 100 runs of this workflow, back to
+# 2025-10-08: 48 startup_failure, 23 failure, zero successes. The add-on's lint
+# gate has never actually run.
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  security-events: write
+
 jobs:
   workflows:
     uses: hassio-addons/workflows/.github/workflows/addon-ci.yaml@main
