@@ -1,3 +1,4 @@
+---
 name: Per-user credential table
 
 # Deliberately its OWN workflow file rather than a job in ci.yaml. ci.yaml
@@ -5,7 +6,7 @@ name: Per-user credential table
 # separate fix), and a gate that cannot run is worse than no gate: it reads as
 # green. This one depends on nothing but bash and jq.
 
-on:
+"on":
   push:
   pull_request:
 

@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# SC2034: USER_PW is populated here and consumed by write_users_json, which is
+#   sourced from the script under test — the linter cannot follow that.
+# SC2015: `cond && ok ... || bad ...` is this file's assertion idiom. `ok` and
+#   `bad` are printf wrappers that cannot fail, so the C-branch is unreachable.
+# SC2317: the stubs below are called indirectly, by the sourced functions.
+# NB: a comment whose first word after "#" is the linter's name is parsed as a
+#   DIRECTIVE and fails — SC1072/SC1073. Hence the wording above.
+# shellcheck disable=SC2034,SC2015,SC2317
 # Tests for the per-user credential table in 00_create-db_and_users.sh.
 #
 # WHAT THIS GUARDS. The add-on hands each consumer a manifest entry AND grants
@@ -69,6 +77,10 @@ echo "== every helper survives bashio's errexit + pipefail =="
 #
 # So every helper is called here under the same flags the container uses, and
 # its exit status is asserted — not just its output.
+# One entry today. The loop is the point: a second helper joins the check by
+# being added here, and shellcheck's "this loop runs once" is exactly the shape
+# we want to keep.
+# shellcheck disable=SC2043
 for fn in gen_password; do
     out="$(bash -o pipefail -o errexit -c "
         $(sed -n "/^${fn}()/,/^}/p" "${TARGET}")
@@ -192,6 +204,8 @@ check "manifest carries every user" \
 # used to be maintained separately.
 drift=""
 for u in ${DATA_USERS}; do
+    # Word splitting is the list format, matching the script under test.
+    # shellcheck disable=SC2086
     want="$(printf '%s\n' ${USER_DBS[$u]} | sort | tr '\n' ' ')"
     got="$(jq -r --arg u "$u" '.users[$u].databases[]' "${USERS_JSON}" | sort | tr '\n' ' ')"
     [ "${want}" = "${got}" ] || drift="${drift} ${u}(want:${want}got:${got})"

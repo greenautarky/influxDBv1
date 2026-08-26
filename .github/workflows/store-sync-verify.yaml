@@ -1,3 +1,4 @@
+---
 name: store-sync-verify
 
 # The Supervisor does NOT read this repo's config.yaml — it reads the copy in
@@ -17,7 +18,7 @@ name: store-sync-verify
 # This verify stays as the TOKENLESS guard: it runs on every PR, where the
 # pushing half cannot.
 
-on:
+"on":
   push:
     branches: [main]
     paths:
