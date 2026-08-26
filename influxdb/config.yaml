@@ -4,7 +4,6 @@ version: 0.0.15
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
-codenotary: thomas@greenautarky.com
 ingress: true
 ingress_port: 1337
 ingress_stream: true
@@ -41,7 +40,8 @@ options:
   ssl: true
   certfile: fullchain.pem
   keyfile: privkey.pem
-  envvars:  #  # optimized for ressource constrained devices
+  # Optimised for resource-constrained devices.
+  envvars:
     - name: INFLUXDB_REPORTING_DISABLED
       value: "true"
     - name: INFLUXDB_DATA_CACHE_MAX_MEMORY_SIZE
