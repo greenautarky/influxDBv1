@@ -1,0 +1,27 @@
+name: Per-user credential table
+
+# Deliberately its OWN workflow file rather than a job in ci.yaml. ci.yaml
+# calls a reusable workflow that has never started in this repository (see the
+# separate fix), and a gate that cannot run is worse than no gate: it reads as
+# green. This one depends on nothing but bash and jq.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  grants-table:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash syntax
+        run: bash -n influxdb/rootfs/etc/cont-init.d/00_create-db_and_users.sh
+      # The manifest a consumer receives and the privilege the server applies
+      # come from one declaration; this asserts they cannot drift apart, and it
+      # reads that declaration from the LIVE script. If the extraction stops
+      # finding it, the job FAILS rather than skipping.
+      - name: table + manifest + grant verification
+        run: bash tests/test_user_grants_table.sh
