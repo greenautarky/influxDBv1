@@ -35,12 +35,226 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - ha_arch: aarch64
-            platform: linux/arm64
           - ha_arch: amd64
             platform: linux/amd64
           - ha_arch: armv7
             platform: linux/arm/v7
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Read add-on version from influxdb/config.yaml (supports quoted/unquoted, ignores comments)
+      - name: Read add-on version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          f="${{ env.ADDON_DIR }}/config.yaml"
+
+          echo ">>> Looking for 'version:' in $f"
+          # Show any version lines (for debugging)
+          grep -n -i '^[[:space:]]*version[[:space:]]*:' "$f" || true
+
+          # Robust extract: take the first 'version:' key, strip comments/quotes/space
+          ver=$(
+            awk 'BEGIN{IGNORECASE=1}
+              /^[[:space:]]*version[[:space:]]*:/{
+                sub(/^.*version[[:space:]]*:[[:space:]]*/,"");  # drop key and colon
+                sub(/[[:space:]]*#.*/,"");                      # drop trailing comment
+                gsub(/"/,"");                                   # drop quotes
+                gsub(/[[:space:]]/,"");                         # drop spaces/tabs
+                print; exit
+              }' "$f"
+          )
+
+          if [-z "${ver:-}"]; then
+            echo "::error::Could not read version from $f"
+            echo "First 30 lines for inspection:"; nl -ba "$f" | sed -n '1,30p'
+            exit 1
+          fi
+
+          echo "Detected add-on version: $ver"
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.IMAGE_NS }}/${{ env.ADDON_SLUG }}-${{ matrix.ha_arch }}
+          # Release tags (:latest, :<version>) ONLY from the default branch.
+          # This repo carries a repository.json, so it is a valid HA add-on
+          # store in its own right: a test device adds it and installs the real
+          # artifact over the real Supervisor path. Branch builds feed THAT and
+          # get a branch/sha tag; :latest and version tags belong to the
+          # collector store (vibe_addons) and to what the OS bakes.
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.ver.outputs.value }},enable={{is_default_branch}}
+            type=ref,event=tag
+            type=ref,event=branch,enable=${{ github.ref_name != github.event.repository.default_branch }}
+            type=sha,enable=${{ github.ref_name != github.event.repository.default_branch }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      # The base comes from THIS add-on's build.yaml. It used to be a `case`
+      # statement right here, hardcoding armv7 to debian-base/armv7:8.1.4 — so
+      # build.yaml was never read, and editing build_from changed nothing about
+      # the image that was built.
+      #
+      # That is not a tidiness point, it cost a full CI cycle on 2026-08-20:
+      # 0.0.5 migrated armv7 onto ga-addon-debian-base-armv7:trixie, was proven
+      # on real K31 hardware, merged — and the build still ran on 8.1.4. The CVE
+      # gate then failed with 85 fixable HIGH/CRITICAL and was RIGHT to: it was
+      # scanning the old base. Measured on the two images:
+      #     debian-base/armv7:8.1.4  -> Debian 13.1, 85 fixable HIGH/CRITICAL
+      #     ga-addon-debian-base:trixie -> Debian 13.6, 0
+      # The migration had simply never reached the build.
+      #
+      # Same defect shape was found the same day in ga-ops/addon-publish.yml and
+      # in greenautarky/MQTT: the workflow CONSTRUCTS the base instead of
+      # reading the declaration. All three now use one resolver, which lives in
+      # the PUBLIC vibe_addons repo so a workflow can check it out without a
+      # cross-repo token. It fails rather than falling back when build.yaml
+      # omits an arch, and warns loudly when there is no build.yaml at all.
+      - name: Checkout the store repo (public — carries the base resolver)
+        uses: actions/checkout@v4
+        with:
+          repository: greenautarky/vibe_addons
+          path: .store
+
+      - name: Install PyYAML
+        run: pip install --quiet "PyYAML>=6,<7"
+
+      - name: Resolve base image
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          img=$(python3 .store/scripts/resolve_addon_base.py \
+                  --addon-dir influxdb \
+                  --arch "${{ matrix.ha_arch }}" \
+                  --legacy-tag "${{ env.BASE_VERSION }}")
+          echo "img=$img" >> "$GITHUB_OUTPUT"
+          echo "Using base: $img"
+
+      # ORDER IS LOAD-BEARING: build -> scan -> push. The image is pushed ONLY
+      # if the CVE gate below passes, so a fixable HIGH/CRITICAL in the distro
+      # layer can never reach GHCR. An earlier version pushed first and scanned
+      # after — that scans nothing you can un-ship. Modelled on the proven
+      # build.yaml in greenautarky/ga-addon-base. Each matrix job is
+      # single-platform (one ha_arch), so `--load` works and there is a real
+      # local image to scan before it exists in the registry.
+      - name: Build (${{ matrix.ha_arch }}) — load, no push yet
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ env.ADDON_DIR }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: local/ga_influxdbv1:scan
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_FROM=${{ steps.base.outputs.img }}
+            BUILD_ARCH=${{ matrix.ha_arch }}
+
+      # CVE GATE on the DISTRO layer (dpkg — this is a Debian-based add-on on
+      # hassio-addons/debian-base). A fixable HIGH/CRITICAL here means the
+      # unpinned distro package has a patched version, so a rebuild fixes it —
+      # so we FAIL, and the image is NOT pushed. `--ignore-unfixed` so a distro
+      # CVE with no fix yet cannot permanently wedge the release. Scans the
+      # LOCAL image built above (before it exists in the registry). Direct trivy
+      # invocation (NOT trivy-action) with these exact flags — proven to scope
+      # the scan to OS packages in ga-addon-base. `--pkg-types os` = dpkg here.
+      # COVERAGE ASSERTION (scripts/cve-gate.sh): a bare `trivy --exit-code 1`
+      # returns SUCCESS when it matches ZERO OS packages — an empty report is
+      # indistinguishable from a clean one. Measured 2026-08-20: the previous
+      # command here returned exit 0 on an image with 143 real binaries and no
+      # package DB. cve-gate.sh adds `--list-all-pkgs`, counts what trivy
+      # actually evaluated, and exits 2 (BROKEN SCAN, never a pass) if that is
+      # zero or below COVERAGE_MIN_PCT of the image's own apk/dpkg DB. Same
+      # fail-closed rule as scan-cves.sh in ha-operating-system. The fixtures in
+      # tests/cve-gate/ re-prove it red AND green on every change.
+      - name: CVE GATE — distro packages (fixable HIGH/CRITICAL block the push)
+        run: |
+          scripts/cve-gate.sh local/ga_influxdbv1:scan
+
+      # REPORT the bundled application libraries — fixable only when the
+      # dependency is bumped, so surface for visibility but never block the
+      # push. Runs even if the gate above failed, so the full picture is logged.
+      - name: CVE report — bundled libraries (visibility, non-gating)
+        if: always()
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --scanners vuln --pkg-types library \
+            --severity HIGH,CRITICAL \
+            --exit-code 0 --no-progress \
+            local/ga_influxdbv1:scan
+
+      # Reached only if the CVE gate passed. Tag the vetted local image with the
+      # exact tags docker/metadata-action produced (the same
+      # ghcr.io/greenautarky/ga_influxdbv1-<arch>:<version> + :latest scheme the
+      # build-push step used to push directly) and push each one.
+      - name: Push (gate passed — publish the vetted image)
+        run: |
+          set -euo pipefail
+          tags="${{ steps.meta.outputs.tags }}"
+          pushed=0
+          while IFS= read -r t; do
+            [-z "$t"] && continue
+            docker tag local/ga_influxdbv1:scan "$t"
+            docker push "$t"
+            pushed=$((pushed + 1))
+          done <<< "$tags"
+          if ["$pushed" -eq 0]; then
+            echo "::error::no tags resolved from metadata-action — nothing was pushed"
+            exit 1
+          fi
+          echo "Pushed $pushed tag(s) for ${{ matrix.ha_arch }}"
+
+  # aarch64 is built here as a SEPARATE, NON-BLOCKING job — deliberately NOT a
+  # `needs:` of sync-downstream. Both halves are the point:
+  #   * KEEP building it. The successor device is arm64 and the parallel-bridge
+  #     strategy (ga-ihost-docs ADR-0016, Option D) builds every sibling add-on
+  #     for armv7 AND aarch64 from one codebase so the arm64 path stays current.
+  #   * DO NOT let it gate delivery. The fleet is armv7 (iHost). aarch64 builds
+  #     under QEMU, which is slow and has a known hang (ga-ops #730). While it
+  #     shared the `build` matrix, `sync-downstream: needs: build` waited for
+  #     ALL legs, so a slow/hanging aarch64 blocked the armv7 store-sync — an rc
+  #     was blocked ~30 min this way on 2026-08-31.
+  # Split out, the armv7 (+amd64) publish and its store-sync run on their own
+  # timeline. `continue-on-error` keeps a red aarch64 leg from failing the
+  # release-critical publish (no arm64 device has shipped yet); `timeout-minutes`
+  # bounds the #730 hang. The steps below are a DELIBERATE verbatim copy of the
+  # `build` job above (same workflow-level env) — a fix to one must be mirrored
+  # in the other, or both lifted into a composite action (follow-up).
+  build-aarch64:
+    runs-on: ubuntu-latest
+    continue-on-error: true    # a red/slow aarch64 must not fail or block the armv7 publish
+    timeout-minutes: 60        # bound the known QEMU-aarch64 hang (ga-ops #730)
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ha_arch: aarch64
+            platform: linux/arm64
 
     steps:
       - name: Checkout
