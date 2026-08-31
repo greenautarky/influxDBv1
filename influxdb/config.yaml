@@ -30,18 +30,14 @@ ports_description:
 auth_api: true
 options:
   auth: true
-  # Credential model for the on-device users. false = legacy shared secret +
-  # ALL PRIVILEGES; true (now the default) = distinct per-user least-privilege
-  # secrets exported addon-private to /data/influx-users.json for ga_manager
-  # delivery (ADR-0002/0003 device-local plane, Odoo # 548, #553).
+  # Credential model for the on-device InfluxDB users. Default true: each
+  # consuming add-on receives its own least-privilege credential, minted here and
+  # handed to ga_manager via /data/influx-users.json (ADR-0002/0003 device-local
+  # plane, Odoo # 548, #553). false selects a single shared credential instead.
   #
-  # Flipped to true 2026-08-31 now that the consumers ARE wired: ga_manager's
-  # converge step 8.5 (gm 0.146.0, #227) delivers the per-user credential, and
-  # the add-ons read it. SAFE for the fleet because the Supervisor PRESERVES a
-  # device's stored options on add-on update — so this new default reaches only
-  # FRESHLY-INSTALLED (new) devices; existing devices keep their false and are
-  # NOT migrated (no fleet-wide credential rotation). Old devices are handled
-  # separately, out of band.
+  # The default applies to freshly-installed devices only: the Supervisor keeps a
+  # device's stored option across add-on updates, so existing devices are
+  # unchanged and handled out of band. Delivery is ga_manager's converge step.
   per_user_secrets: true
   reporting: true
   ssl: true
