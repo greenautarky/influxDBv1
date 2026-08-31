@@ -1,6 +1,6 @@
 ---
 name: ga_InfluxDBv1
-version: 0.0.16
+version: 0.0.17
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
@@ -30,12 +30,19 @@ ports_description:
 auth_api: true
 options:
   auth: true
-  # Credential model for the on-device users. false (default) = legacy shared
-  # secret + ALL PRIVILEGES; true = distinct per-user least-privilege secrets
-  # exported addon-private to /data/influx-users.json for ga_manager delivery
-  # (ADR-0002/0003 device-local plane, Odoo  # 548). Ships default-false so this
-  # release is a no-op; the flip happens only after consumers are wired.
-  per_user_secrets: false
+  # Credential model for the on-device users. false = legacy shared secret +
+  # ALL PRIVILEGES; true (now the default) = distinct per-user least-privilege
+  # secrets exported addon-private to /data/influx-users.json for ga_manager
+  # delivery (ADR-0002/0003 device-local plane, Odoo # 548, #553).
+  #
+  # Flipped to true 2026-08-31 now that the consumers ARE wired: ga_manager's
+  # converge step 8.5 (gm 0.146.0, #227) delivers the per-user credential, and
+  # the add-ons read it. SAFE for the fleet because the Supervisor PRESERVES a
+  # device's stored options on add-on update — so this new default reaches only
+  # FRESHLY-INSTALLED (new) devices; existing devices keep their false and are
+  # NOT migrated (no fleet-wide credential rotation). Old devices are handled
+  # separately, out of band.
+  per_user_secrets: true
   reporting: true
   ssl: true
   certfile: fullchain.pem
