@@ -17,6 +17,10 @@
 # only its filesystem is relocated. If a script is missing, or a rewrite the
 # case depends on matches nothing, the test FAILS; it never skips.
 # ==============================================================================
+# Every CFG_* variable is read by indirect expansion inside the bashio shim
+# (`_cfg`), which no static check can see, so each looks unused. TRACE is set
+# inside subshells on purpose — that isolation is what the harness is for.
+# shellcheck disable=SC2034,SC2030,SC2031
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,9 +36,7 @@ check(){ # check <description> <expected> <actual>
 # ── sandbox ──────────────────────────────────────────────────────────────────
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "${SANDBOX}"' EXIT
-mkdir -p "${SANDBOX}"/{bin,data,run/service,run/s6/basedir/bin} \
-         "${SANDBOX}"/etc/nginx/{servers,includes} \
-         "${SANDBOX}"/etc/kapacitor/templates
+mkdir -p "${SANDBOX}"/{bin,data,run/service,run/s6/basedir/bin} "${SANDBOX}"/etc/nginx/{servers,includes} "${SANDBOX}"/etc/kapacitor/templates
 echo "test-secret" > "${SANDBOX}/data/secret"
 : > "${SANDBOX}/etc/nginx/includes/server_params.conf"
 : > "${SANDBOX}/etc/nginx/includes/proxy_params.conf"
@@ -88,20 +90,22 @@ run_script() {
   local dst="${SANDBOX}/script.sh"
   # Declared path rewrites. `n` counts how many landed; a case that depends on
   # a rewrite asserts on it, so a silently-unmatched pattern cannot pass.
-  sed -e '1s|^#!.*|#!/usr/bin/env bash|' \
-      -e "s|/data/|${SANDBOX}/data/|g" \
-      -e "s|/etc/nginx|${SANDBOX}/etc/nginx|g" \
-      -e "s|/etc/kapacitor|${SANDBOX}/etc/kapacitor|g" \
-      -e "s|/run/s6/basedir/bin/halt|${SANDBOX}/run/s6/basedir/bin/halt|g" \
-      -e "s|/run/service|${SANDBOX}/run/service|g" \
-      "${src}" > "${dst}"
+  sed -e '1s|^#!.*|#!/usr/bin/env bash|' -e "s|/data/|${SANDBOX}/data/|g" -e "s|/etc/nginx|${SANDBOX}/etc/nginx|g" -e "s|/etc/kapacitor|${SANDBOX}/etc/kapacitor|g" -e "s|/run/s6/basedir/bin/halt|${SANDBOX}/run/s6/basedir/bin/halt|g" -e "s|/run/service|${SANDBOX}/run/service|g" "${src}" > "${dst}"
   chmod +x "${dst}"
 
-  TRACE="${SANDBOX}/trace.txt" : > "${SANDBOX}/trace.txt"
+  : > "${SANDBOX}/trace.txt"
   ( export TRACE="${SANDBOX}/trace.txt"
     export PATH="${SANDBOX}/bin:${PATH}"
-    # shellcheck disable=SC1090
+    # The shim and the script under test are both written at run time, so
+    # neither can be followed statically; TRACE is deliberately set only inside
+    # this subshell, which is the point of the isolation.
+    # (A comment must not begin with the linter's own name — it is read as a
+    # directive and fails to parse.)
+    # shellcheck source=/dev/null
+    # shellcheck disable=SC1090,SC1091,SC2030
     source "${SANDBOX}/bashio-shim.sh"
+    # shellcheck source=/dev/null
+    # shellcheck disable=SC1090
     source "${dst}" "$@" ) >/dev/null 2>&1
   echo $?
 }
@@ -110,75 +114,142 @@ say()    { printf '\n%s\n' "$1"; }
 
 # ══ chronograf ═══════════════════════════════════════════════════════════════
 say "chronograf disabled  (the behaviour this option exists for)"
-CFG_chronograf=false CFG_kapacitor=false CFG_reporting=true \
-  rc=$(run_script etc/services.d/chronograf/run)
-traced '^s6-svc -O .*/run/service/chronograf$' && ok "s6-svc -O keeps the service down" \
-  || bad "s6-svc -O was not called — the supervisor would restart it in a loop"
-traced '^chronograf ' && bad "chronograf was started anyway" || ok "chronograf binary not executed"
+CFG_chronograf=false CFG_kapacitor=false CFG_reporting=true rc=$(run_script etc/services.d/chronograf/run)
+if traced '^s6-svc -O .*/run/service/chronograf$'; then
+  ok "s6-svc -O keeps the service down"
+else
+  bad "s6-svc -O was not called — the supervisor would restart it in a loop"
+fi
+if traced '^chronograf '; then
+  bad "chronograf was started anyway"
+else
+  ok "chronograf binary not executed"
+fi
 
 say "chronograf enabled   (must-pass: original behaviour intact)"
-CFG_chronograf=true CFG_kapacitor=true CFG_reporting=true \
-  rc=$(run_script etc/services.d/chronograf/run)
-traced '^chronograf .*--influxdb-url=http://localhost:8086' && ok "chronograf started with its InfluxDB URL" \
-  || bad "chronograf did not start when enabled"
-traced '^s6-svc -O' && bad "service was taken down although enabled" || ok "service not taken down"
+CFG_chronograf=true CFG_kapacitor=true CFG_reporting=true rc=$(run_script etc/services.d/chronograf/run)
+if traced '^chronograf .*--influxdb-url=http://localhost:8086'; then
+  ok "chronograf started with its InfluxDB URL"
+else
+  bad "chronograf did not start when enabled"
+fi
+if traced '^s6-svc -O'; then
+  bad "service was taken down although enabled"
+else
+  ok "service not taken down"
+fi
 
 say "chronograf enabled, kapacitor disabled"
-CFG_chronograf=true CFG_kapacitor=false CFG_reporting=true \
-  rc=$(run_script etc/services.d/chronograf/run)
-traced '^chronograf .*--kapacitor-url' && bad "--kapacitor-url passed to a Kapacitor that is off" \
-  || ok "no --kapacitor-url when Kapacitor is off"
-traced '^s6-svwait .*kapacitor' && bad "waited for a Kapacitor that never starts" \
-  || ok "no s6-svwait on a disabled Kapacitor"
+CFG_chronograf=true CFG_kapacitor=false CFG_reporting=true rc=$(run_script etc/services.d/chronograf/run)
+if traced '^chronograf .*--kapacitor-url'; then
+  bad "--kapacitor-url passed to a Kapacitor that is off"
+else
+  ok "no --kapacitor-url when Kapacitor is off"
+fi
+if traced '^s6-svwait .*kapacitor'; then
+  bad "waited for a Kapacitor that never starts"
+else
+  ok "no s6-svwait on a disabled Kapacitor"
+fi
 
 say "chronograf finish"
 CFG_chronograf=false rc=$(run_script etc/services.d/chronograf/finish 1)
 check "clean exit when disabled (exit 1 must not halt the add-on)" "0" "${rc}"
-traced 'halt' && bad "add-on halted although the service was switched off" || ok "add-on not halted"
+if traced 'halt'; then
+  bad "add-on halted although the service was switched off"
+else
+  ok "add-on not halted"
+fi
 CFG_chronograf=true rc=$(run_script etc/services.d/chronograf/finish 1)
-traced 'halt' && ok "a real crash still halts the add-on when enabled" \
-  || bad "crash handling lost — a crashed Chronograf no longer halts the add-on"
+if traced 'halt'; then
+  ok "a real crash still halts the add-on when enabled"
+else
+  bad "crash handling lost — a crashed Chronograf no longer halts the add-on"
+fi
 
 # ══ kapacitor ════════════════════════════════════════════════════════════════
 say "kapacitor disabled"
 CFG_kapacitor=false rc=$(run_script etc/services.d/kapacitor/run)
-traced '^s6-svc -O .*/run/service/kapacitor$' && ok "s6-svc -O keeps the service down" \
-  || bad "s6-svc -O was not called"
-traced '^kapacitord' && bad "kapacitord was started anyway" || ok "kapacitord not executed"
+if traced '^s6-svc -O .*/run/service/kapacitor$'; then
+  ok "s6-svc -O keeps the service down"
+else
+  bad "s6-svc -O was not called"
+fi
+if traced '^kapacitord'; then
+  bad "kapacitord was started anyway"
+else
+  ok "kapacitord not executed"
+fi
 
 say "kapacitor enabled    (must-pass)"
 CFG_kapacitor=true rc=$(run_script etc/services.d/kapacitor/run)
-traced '^kapacitord' && ok "kapacitord started" || bad "kapacitord did not start when enabled"
+if traced '^kapacitord'; then
+  ok "kapacitord started"
+else
+  bad "kapacitord did not start when enabled"
+fi
 
 say "kapacitor configuration (cont-init)"
 CFG_kapacitor=false CFG_reporting=true rc=$(run_script etc/cont-init.d/kapacitor.sh)
 check "cont-init exits 0 when disabled" "0" "${rc}"
-traced '^tempio' && bad "kapacitor.conf rendered although disabled" || ok "kapacitor.conf not rendered"
+if traced '^tempio'; then
+  bad "kapacitor.conf rendered although disabled"
+else
+  ok "kapacitor.conf not rendered"
+fi
 CFG_kapacitor=true CFG_reporting=true rc=$(run_script etc/cont-init.d/kapacitor.sh)
-traced '^tempio' && ok "kapacitor.conf rendered when enabled" || bad "kapacitor.conf not rendered when enabled"
+if traced '^tempio'; then
+  ok "kapacitor.conf rendered when enabled"
+else
+  bad "kapacitor.conf not rendered when enabled"
+fi
 
 # ══ nginx ════════════════════════════════════════════════════════════════════
 say "nginx must not block on an upstream that never comes up"
 CFG_chronograf=false CFG_leave_front_door_open=false rc=$(run_script etc/services.d/nginx/run)
-traced '^wait_for 8889' && bad "NGINX waits 9000 s for a disabled Chronograf" || ok "no wait when disabled"
-traced '^nginx' && ok "NGINX started" || bad "NGINX did not start"
+if traced '^wait_for 8889'; then
+  bad "NGINX waits 9000 s for a disabled Chronograf"
+else
+  ok "no wait when disabled"
+fi
+if traced '^nginx'; then
+  ok "NGINX started"
+else
+  bad "NGINX did not start"
+fi
 CFG_chronograf=true CFG_leave_front_door_open=false rc=$(run_script etc/services.d/nginx/run)
-traced '^wait_for 8889' && ok "NGINX still waits for Chronograf when enabled" || bad "wait lost when enabled"
+if traced '^wait_for 8889'; then
+  ok "NGINX still waits for Chronograf when enabled"
+else
+  bad "wait lost when enabled"
+fi
 
 say "ingress panel answers instead of proxying to a dead port"
 cp "${SANDBOX}/etc/nginx/servers/ingress.conf.orig" "${SANDBOX}/etc/nginx/servers/ingress.conf"
 CFG_chronograf=false CFG_ssl=true rc=$(run_script etc/cont-init.d/nginx.sh)
 ING="$(cat "${SANDBOX}/etc/nginx/servers/ingress.conf")"
-grep -q 'proxy_pass' <<<"${ING}" && bad "ingress still proxies to a stopped Chronograf" \
-  || ok "no proxy_pass when Chronograf is off"
-grep -q "switched off by the add-on option" <<<"${ING}" && ok "ingress explains why the panel is empty" \
-  || bad "ingress gives no reason"
+if grep -q 'proxy_pass' <<<"${ING}"; then
+  bad "ingress still proxies to a stopped Chronograf"
+else
+  ok "no proxy_pass when Chronograf is off"
+fi
+if grep -q "switched off by the add-on option" <<<"${ING}"; then
+  ok "ingress explains why the panel is empty"
+else
+  bad "ingress gives no reason"
+fi
 cp "${SANDBOX}/etc/nginx/servers/ingress.conf.orig" "${SANDBOX}/etc/nginx/servers/ingress.conf"
 CFG_chronograf=true CFG_ssl=true rc=$(run_script etc/cont-init.d/nginx.sh)
-grep -q 'proxy_pass http://backend' "${SANDBOX}/etc/nginx/servers/ingress.conf" \
-  && ok "ingress proxies normally when enabled" || bad "ingress proxy lost when enabled"
-grep -q '172.30.33.5:1337' "${SANDBOX}/etc/nginx/servers/ingress.conf" \
-  && ok "ingress listener still templated" || bad "ingress listener not templated"
+if grep -q 'proxy_pass http://backend' "${SANDBOX}/etc/nginx/servers/ingress.conf"; then
+  ok "ingress proxies normally when enabled"
+else
+  bad "ingress proxy lost when enabled"
+fi
+if grep -q '172.30.33.5:1337' "${SANDBOX}/etc/nginx/servers/ingress.conf"; then
+  ok "ingress listener still templated"
+else
+  bad "ingress listener not templated"
+fi
 
 # ══ InfluxDB accounts ════════════════════════════════════════════════════════
 # The account table is the security half of the option: a disabled tool must
@@ -194,7 +265,10 @@ else
     bad "could not extract the account table from the live script (it moved or was renamed)"
   else
     for combo in "false false" "true false" "true true"; do
+      # shellcheck disable=SC2086
       set -- ${combo}
+      # shellcheck source=/dev/null
+      # shellcheck disable=SC1091,SC2030,SC2031
       OUT="$( export TRACE=/dev/null
               source "${SANDBOX}/bashio-shim.sh"
               CFG_chronograf="$1" CFG_kapacitor="$2"
@@ -206,10 +280,56 @@ else
         "true true")   check "both on"         "admin=[ga_influx_admin chronograf kapacitor] disabled=[]" "${OUT}" ;;
       esac
     done
-    grep -q 'DROP USER' "${PROV}" && ok "a leftover account is dropped, not just skipped" \
-      || bad "no DROP USER — an account from an earlier configuration keeps ALL PRIVILEGES"
-    grep -q 'drop_disabled_tool_users$' "${PROV}" && ok "the drop is actually called" \
-      || bad "drop_disabled_tool_users is defined but never called"
+    # Behaviour, not text: the live drop function is extracted and RUN against a
+    # stubbed server. Grepping for the string "DROP USER" also matches the log
+    # line next to it, so a build that no longer drops anything would still pass.
+    DROPFN="$(sed -n '/^drop_disabled_tool_users() {/,/^}$/p' "${PROV}")"
+    if ! grep -q '^}' <<<"${DROPFN}"; then
+      bad "could not extract drop_disabled_tool_users from the live script"
+    else
+      run_drop() { # run_drop <disabled-tools> <accounts-the-server-reports>
+        # shellcheck source=/dev/null
+        # shellcheck disable=SC1091,SC2031
+        ( export TRACE=/dev/null
+          source "${SANDBOX}/bashio-shim.sh"
+          DROPLOG="${SANDBOX}/drops.txt"; : > "${DROPLOG}"
+          # Bound OUTSIDE the stub: inside it, $2 is the stub's own argument.
+          SHOW_USERS_OUTPUT="$2"
+          # shellcheck disable=SC2317
+          influx() {
+            if [[ "$*" == *"SHOW USERS"* ]]; then printf 'user admin\n%s\n' "${SHOW_USERS_OUTPUT}"
+            else printf '%s\n' "$*" >> "${DROPLOG}"; fi
+          }
+          DISABLED_TOOLS="$1"
+          eval "${DROPFN}"
+          drop_disabled_tool_users
+          cat "${DROPLOG}" ) 2>/dev/null
+      }
+      SERVER_HAS=$'ga_influx_admin true\nchronograf true\nkapacitor true'
+      OUT="$(run_drop "chronograf kapacitor" "${SERVER_HAS}")"
+      if grep -q 'DROP USER chronograf' <<<"${OUT}" && grep -q 'DROP USER kapacitor' <<<"${OUT}"; then
+        ok "both leftover accounts are actually dropped"
+      else
+        bad "an account from an earlier configuration keeps ALL PRIVILEGES (issued: ${OUT//$'\n'/, })"
+      fi
+      OUT="$(run_drop "" "${SERVER_HAS}")"
+      if [[ -z "${OUT}" ]]; then
+        ok "nothing is dropped when both tools are enabled"
+      else
+        bad "dropped an account of an ENABLED tool: ${OUT//$'\n'/, }"
+      fi
+      OUT="$(run_drop "chronograf kapacitor" "ga_influx_admin true")"
+      if [[ -z "${OUT}" ]]; then
+        ok "no DROP for an account the server does not have"
+      else
+        bad "issued a DROP for a non-existent account: ${OUT//$'\n'/, }"
+      fi
+    fi
+    if grep -qE '^drop_disabled_tool_users$' "${PROV}"; then
+      ok "the drop is actually called"
+    else
+      bad "drop_disabled_tool_users is defined but never called"
+    fi
   fi
 fi
 
@@ -217,10 +337,34 @@ fi
 say "add-on configuration surface"
 CFGY="${REPO_ROOT}/influxdb/config.yaml"
 for key in chronograf kapacitor; do
-  grep -qE "^  ${key}: (true|false)$" "${CFGY}" && ok "option '${key}' has a default" \
-    || bad "option '${key}' missing from options:"
-  grep -qE "^  ${key}: bool\??$" "${CFGY}" && ok "option '${key}' is in the schema" \
-    || bad "option '${key}' missing from schema: — the Supervisor would drop it"
+  if grep -qE "^  ${key}: (true|false)$" "${CFGY}"; then
+    ok "option '${key}' has a default"
+  else
+    bad "option '${key}' missing from options:"
+  fi
+  if grep -qE "^  ${key}: bool\??$" "${CFGY}"; then
+    ok "option '${key}' is in the schema"
+  else
+    bad "option '${key}' missing from schema: — the Supervisor would drop it"
+  fi
+done
+
+# ══ resource defaults ════════════════════════════════════════════════════════
+# Expectations are constants here on purpose: an audit that reads its expected
+# value out of the file it audits is green for every value that file holds.
+say "InfluxDB resource defaults for constrained hardware"
+declare -A EXPECT_ENVVARS=(
+  [INFLUXDB_MONITOR_STORE_ENABLED]="false"
+  [INFLUXDB_REPORTING_DISABLED]="true"
+  [INFLUXDB_DATA_CACHE_MAX_MEMORY_SIZE]="64m"
+)
+for name in "${!EXPECT_ENVVARS[@]}"; do
+  want="${EXPECT_ENVVARS[$name]}"
+  got="$(awk -v n="${name}" '
+      $0 ~ ("- name: " n "$") {found=1; next}
+      found && /value:/ {gsub(/.*value: *"?|"$/, ""); print; exit}
+  ' "${CFGY}")"
+  check "envvar ${name}" "${want}" "${got}"
 done
 
 printf '\n────────────────────────────────\n%d passed, %d failed\n' "${PASS}" "${FAIL}"

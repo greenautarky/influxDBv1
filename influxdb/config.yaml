@@ -61,6 +61,15 @@ options:
       value: "100ms"
     - name: INFLUXDB_DATA_TSM_USE_MADV_WILLNEED
       value: "false"
+    # InfluxDB's internal monitor samples its own statistics every 10 s and
+    # writes them to the _internal database. Collecting them estimates series
+    # and measurement cardinality with a HyperLogLog++ sketch, whose float64
+    # arithmetic dominates the process on this hardware: measured on an iHost
+    # (armv7) carrying 55 series, influxd sat at 18.5% of one core, and 1.9%
+    # with this set — a tenfold reduction for statistics nothing reads.
+    # Cardinality is still computed on demand (SHOW SERIES CARDINALITY).
+    - name: INFLUXDB_MONITOR_STORE_ENABLED
+      value: "false"
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   auth: bool
