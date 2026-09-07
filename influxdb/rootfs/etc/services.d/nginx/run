@@ -3,8 +3,11 @@
 # Home Assistant Community Add-on: InfluxDB
 # Runs the NGINX daemon
 # ==============================================================================
-# Wait for Chronograf to become available
-bashio::net.wait_for 8889 localhost 9000
+# Wait for Chronograf to become available. With Chronograf disabled there is
+# no upstream, and this call would block NGINX for 9000 seconds.
+if bashio::config.true 'chronograf'; then
+    bashio::net.wait_for 8889 localhost 9000
+fi
 
 bashio::log.info "Starting NGINX..."
 

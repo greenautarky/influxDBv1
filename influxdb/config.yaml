@@ -1,6 +1,6 @@
 ---
 name: ga_InfluxDBv1
-version: 0.0.17
+version: 0.0.18
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
@@ -39,6 +39,12 @@ options:
   # device's stored option across add-on updates, so existing devices are
   # unchanged and handled out of band. Delivery is ga_manager's converge step.
   per_user_secrets: true
+  # Chronograf (the add-on's web UI, reachable through Ingress) and Kapacitor
+  # (its alerting/processing companion) are not used by any GA component. Off
+  # by default: two fewer long-running processes and two fewer InfluxDB
+  # accounts with ALL PRIVILEGES. Set either to true to get it back.
+  chronograf: false
+  kapacitor: false
   reporting: true
   ssl: true
   certfile: fullchain.pem
@@ -59,6 +65,8 @@ schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   auth: bool
   per_user_secrets: bool?
+  chronograf: bool?
+  kapacitor: bool?
   reporting: bool
   ssl: bool
   certfile: str

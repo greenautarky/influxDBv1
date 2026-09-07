@@ -5,6 +5,14 @@
 # ==============================================================================
 declare secret
 
+# Kapacitor is the alerting/processing companion. No GA component defines a
+# task in it, so it is optional and defaults to off — see the note in
+# services.d/chronograf/run for why `s6-svc -O` is needed here.
+if ! bashio::config.true 'kapacitor'; then
+    bashio::log.info "Kapacitor is disabled by add-on configuration; not starting it."
+    exec s6-svc -O /run/service/kapacitor
+fi
+
 # Wait for InfluxDB to become available
 s6-svwait -u -t 5000 /run/service//influxdb
 
