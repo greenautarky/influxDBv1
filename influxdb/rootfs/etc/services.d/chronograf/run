@@ -8,11 +8,24 @@ declare -a options
 declare ingress_entry
 declare secret
 
+# Chronograf is this add-on's web UI. Nothing on a GA device reads it, so it is
+# optional: not starting it removes a long-running process, its BoltDB file and
+# one InfluxDB account holding ALL PRIVILEGES. The option defaults to off.
+#
+# `s6-svc -O` ("once at most") tells the supervisor not to bring the service
+# back up after this script exits. Without it, exiting here is a restart loop.
+if ! bashio::config.true 'chronograf'; then
+    bashio::log.info "Chronograf is disabled by add-on configuration; not starting it."
+    exec s6-svc -O /run/service/chronograf
+fi
+
 # Wait for InfluxDB to become available
 s6-svwait -u -t 5000 /run/service//influxdb
 
-# Wait for Kapacitor to become available
-s6-svwait -u -t 5000 /run/service//kapacitor
+# Wait for Kapacitor to become available — only if it is enabled at all.
+if bashio::config.true 'kapacitor'; then
+    s6-svwait -u -t 5000 /run/service//kapacitor
+fi
 
 secret=$(</data/secret)
 
@@ -42,7 +55,9 @@ options+=(--influxdb-url="http://localhost:8086")
 
 options+=(--influxdb-username="chronograf")
 options+=(--influxdb-password="${secret}")
-options+=(--kapacitor-url="http://localhost:9092")
+if bashio::config.true 'kapacitor'; then
+    options+=(--kapacitor-url="http://localhost:9092")
+fi
 
 # Find the matching Chronograph log level
 if bashio::config.has_value 'log_level'; then

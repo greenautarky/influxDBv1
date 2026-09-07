@@ -117,7 +117,39 @@ declare -A USER_DBS=(
     [ga_telegraf]="ga_telegraf"
 )
 DATA_USERS="ga_ha_influx_user ga_default ga_hmvapp ga_telegraf"
-ADMIN_USERS="ga_influx_admin chronograf kapacitor"
+
+# Chronograf and Kapacitor are optional (add-on options of the same name, both
+# off by default). They are the only accounts besides ga_influx_admin that hold
+# ALL PRIVILEGES, so when their service is not started their account is not
+# created either — and an account left behind by an earlier configuration is
+# dropped once the temporary server is up (see drop_disabled_tool_users).
+#
+# The two lists are derived from ONE loop rather than written out twice: a tool
+# that is enabled but missing from ADMIN_USERS gets no account and fails to
+# authenticate; a tool that is disabled but still listed keeps its privilege.
+ENABLED_TOOLS=""
+DISABLED_TOOLS=""
+for tool in chronograf kapacitor; do
+    if bashio::config.true "${tool}"; then
+        ENABLED_TOOLS="${ENABLED_TOOLS}${ENABLED_TOOLS:+ }${tool}"
+    else
+        DISABLED_TOOLS="${DISABLED_TOOLS}${DISABLED_TOOLS:+ }${tool}"
+    fi
+done
+ADMIN_USERS="ga_influx_admin${ENABLED_TOOLS:+ ${ENABLED_TOOLS}}"
+
+# Remove accounts whose service is switched off. Reversible: flipping the
+# option back re-creates the account with a fresh password on the next start.
+drop_disabled_tool_users() {
+    local u
+    for u in ${DISABLED_TOOLS}; do
+        if influx -execute "SHOW USERS" | grep -q "^${u}[[:space:]]"; then
+            bashio::log.info "Dropping InfluxDB account ${u} — its service is disabled"
+            influx -execute "DROP USER ${u}" &> /dev/null || \
+                bashio::log.error "DROP USER ${u} failed"
+        fi
+    done
+}
 
 # ─── Per-user distinct-secret mode (target) ──────────────────────────────────
 # Passwords persist in /data/influx-users.json so they are stable across
@@ -349,14 +381,18 @@ else
     create_or_update_user "ga_influx_admin" "${USER_PW[ga_influx_admin]}"
     create_or_update_user "ga_telegraf" "${USER_PW[ga_telegraf]}"
     create_or_update_user "ga_ha_influx_user" "${USER_PW[ga_ha_influx_user]}"
-    create_or_update_user "chronograf" "${USER_PW[chronograf]}"
-    create_or_update_user "kapacitor" "${USER_PW[kapacitor]}"
+    for u in ${ENABLED_TOOLS}; do
+        create_or_update_user "${u}" "${USER_PW[$u]}"
+    done
 
     influx -execute "GRANT ALL PRIVILEGES TO ga_influx_admin" &> /dev/null || true
     influx -execute "GRANT ALL PRIVILEGES TO ga_telegraf" &> /dev/null || true
     influx -execute "GRANT ALL ON ga_homeassistant_db TO ga_ha_influx_user" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO chronograf" &> /dev/null || true
-    influx -execute "GRANT ALL PRIVILEGES TO kapacitor" &> /dev/null || true
+    for u in ${ENABLED_TOOLS}; do
+        influx -execute "GRANT ALL PRIVILEGES TO ${u}" &> /dev/null || true
+    done
 fi
+
+drop_disabled_tool_users
 
 kill "$(pgrep influxd)" >/dev/null 2>&1

@@ -1,6 +1,6 @@
 ---
 name: ga_InfluxDBv1
-version: 0.0.17
+version: 0.0.18
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
@@ -39,6 +39,12 @@ options:
   # device's stored option across add-on updates, so existing devices are
   # unchanged and handled out of band. Delivery is ga_manager's converge step.
   per_user_secrets: true
+  # Chronograf (the add-on's web UI, reachable through Ingress) and Kapacitor
+  # (its alerting/processing companion) are not used by any GA component. Off
+  # by default: two fewer long-running processes and two fewer InfluxDB
+  # accounts with ALL PRIVILEGES. Set either to true to get it back.
+  chronograf: false
+  kapacitor: false
   reporting: true
   ssl: true
   certfile: fullchain.pem
@@ -55,10 +61,21 @@ options:
       value: "100ms"
     - name: INFLUXDB_DATA_TSM_USE_MADV_WILLNEED
       value: "false"
+    # InfluxDB's internal monitor samples its own statistics every 10 s and
+    # writes them to the _internal database. Collecting them estimates series
+    # and measurement cardinality with a HyperLogLog++ sketch, whose float64
+    # arithmetic dominates the process on this hardware: measured on an iHost
+    # (armv7) carrying 55 series, influxd sat at 18.5% of one core, and 1.9%
+    # with this set — a tenfold reduction for statistics nothing reads.
+    # Cardinality is still computed on demand (SHOW SERIES CARDINALITY).
+    - name: INFLUXDB_MONITOR_STORE_ENABLED
+      value: "false"
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   auth: bool
   per_user_secrets: bool?
+  chronograf: bool?
+  kapacitor: bool?
   reporting: bool
   ssl: bool
   certfile: str

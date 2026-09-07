@@ -4,6 +4,11 @@
 # Configures Kapacitor.conf
 # ==============================================================================
 
+if ! bashio::config.true 'kapacitor'; then
+    bashio::log.info "Kapacitor is disabled by add-on configuration; skipping its configuration."
+    exit 0
+fi
+
 bashio::var.json \
     reporting "^$(bashio::config 'reporting')" \
     secret "$(</data/secret)"\
