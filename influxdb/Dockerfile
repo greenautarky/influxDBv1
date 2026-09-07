@@ -1,4 +1,43 @@
 ARG BUILD_FROM
+ARG BUILD_ARCH
+ARG INFLUXDB_VERSION="1.8.10"
+
+# ── influxd/influx/influx_inspect built from source with GOARM=7 on armv7 ─────
+# InfluxData's official armhf .deb is built GOARM=5 — software floating point on
+# hardware that has VFPv3/VFPv4/NEON. On an iHost that is ~18% of one core at
+# idle, dominated by the internal monitor's HyperLogLog cardinality math.
+# Building v1.8.10 from its own tag with GOARM=7 uses the FPU and drops idle to
+# ~3%. aarch64/amd64 have no softfloat variant; they are built from the same tag
+# for provenance and to remove the unverifiable vendor binary uniformly.
+# The build FAILS CLOSED if the armv7 binary still links the software-float path.
+# hadolint ignore=DL3006
+FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.19-bookworm AS influxbuild
+ARG BUILD_ARCH
+ARG INFLUXDB_VERSION
+# hadolint ignore=DL3003
+RUN set -eux; \
+    git clone --depth 1 --branch "v${INFLUXDB_VERSION}" https://github.com/influxdata/influxdb.git /src; \
+    cd /src; \
+    case "${BUILD_ARCH}" in \
+      armv7)   export GOARCH=arm GOARM=7 ;; \
+      aarch64) export GOARCH=arm64 ;; \
+      amd64)   export GOARCH=amd64 ;; \
+      *) echo "unsupported BUILD_ARCH: ${BUILD_ARCH}"; exit 1 ;; \
+    esac; \
+    export CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=mod; \
+    for c in influxd influx influx_inspect; do \
+      go build -trimpath -ldflags "-s -w -X main.version=${INFLUXDB_VERSION}" -o "/out/${c}" "./cmd/${c}"; \
+    done; \
+    # Red/green proof, in the build: GOARM=7 dead-code-eliminates the softfloat
+    # path, GOARM<7 links it. If it is still present on armv7, the rebuild did
+    # not take — fail rather than ship a binary that is no better than the deb.
+    if [ "${BUILD_ARCH}" = "armv7" ]; then \
+      if grep -aq "runtime.fadd64" /out/influxd; then \
+        echo "FAIL: armv7 influxd still links the software-float path (GOARM<7)"; exit 1; \
+      fi; \
+      echo "OK: armv7 influxd is hardware-float (GOARM=7, no runtime.fadd64)"; \
+    fi
+
 # hadolint ignore=DL3006
 FROM ${BUILD_FROM}
 
@@ -72,6 +111,13 @@ RUN \
     && mkdir -p /var/log/nginx \
     && touch /var/log/nginx/error.log
 
+
+# Replace the vendor influx binaries (GOARM=5 on armv7) with our GOARM=7 source
+# build. Chronograf/Kapacitor stay from the .deb — they are already hardware-fp
+# and are optional/off by default anyway.
+COPY --from=influxbuild /out/influxd /usr/bin/influxd
+COPY --from=influxbuild /out/influx /usr/bin/influx
+COPY --from=influxbuild /out/influx_inspect /usr/bin/influx_inspect
 
 # Copy root filesystem
 COPY rootfs /
