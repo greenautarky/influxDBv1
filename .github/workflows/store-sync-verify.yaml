@@ -1,0 +1,59 @@
+---
+name: store-sync-verify
+
+# The Supervisor does NOT read this repo's config.yaml — it reads the copy in
+# the PUBLIC greenautarky/vibe_addons store repo. The two are synced by hand,
+# so a change made only here ships an image and reaches no device, silently.
+# That is the drift the InfluxDB cut (Odoo #682) walks straight into: it closes
+# port 8086 and flips per_user_secrets, and both live in the store copy.
+#
+# This job proves the two agree. It needs NO secret — both configs are public.
+#
+# The PUSHING half (render the store entry and push it) is the
+# `sync-downstream` job in publish.yaml, calling
+# greenautarky/ga-ops/.github/workflows/addon-store-lockstep.yml. It runs only
+# when DOWNSTREAM_SYNC_PAT is set in this repo's Actions secrets — this repo
+# is PUBLIC, so handing it a write token to vibe_addons is a deliberate
+# decision, taken by setting that secret (and fail-loud until then).
+# This verify stays as the TOKENLESS guard: it runs on every PR, where the
+# pushing half cannot.
+
+"on":
+  push:
+    branches: [main]
+    paths:
+      - "influxdb/config.yaml"
+      - ".github/workflows/store-sync-verify.yaml"
+  pull_request:
+    paths:
+      - "influxdb/config.yaml"
+      - ".github/workflows/store-sync-verify.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout the store repo (public — carries the renderer + verifier)
+        uses: actions/checkout@v4
+        with:
+          repository: greenautarky/vibe_addons
+          path: .store
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: pip install --quiet "PyYAML>=6,<7"
+      - name: Assert the store entry equals what this source renders to
+        run: |
+          set -euo pipefail
+          python3 .store/scripts/verify_store_sync.py \
+            influxdb/config.yaml \
+            .store/influxdb/config.yaml \
+            --image "ghcr.io/greenautarky/ga_influxdbv1-{arch}" \
+            --name ga_influxdbv1 \
+            --source-repo influxDBv1

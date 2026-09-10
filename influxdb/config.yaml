@@ -1,10 +1,9 @@
 ---
 name: ga_InfluxDBv1
-version: "0.0.4"
+version: 0.0.19
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
-codenotary: thomas@greenautarky.com
 ingress: true
 ingress_port: 1337
 ingress_stream: true
@@ -31,17 +30,27 @@ ports_description:
 auth_api: true
 options:
   auth: true
-  # Credential model for the on-device users. false (default) = legacy shared
-  # secret + ALL PRIVILEGES; true = distinct per-user least-privilege secrets
-  # exported addon-private to /data/influx-users.json for ga_manager delivery
-  # (ADR-0002/0003 device-local plane, Odoo #548). Ships default-false so this
-  # release is a no-op; the flip happens only after consumers are wired.
-  per_user_secrets: false
+  # Credential model for the on-device InfluxDB users. Default true: each
+  # consuming add-on receives its own least-privilege credential, minted here and
+  # handed to ga_manager via /data/influx-users.json (ADR-0002/0003 device-local
+  # plane, Odoo # 548, #553). false selects a single shared credential instead.
+  #
+  # The default applies to freshly-installed devices only: the Supervisor keeps a
+  # device's stored option across add-on updates, so existing devices are
+  # unchanged and handled out of band. Delivery is ga_manager's converge step.
+  per_user_secrets: true
+  # Chronograf (the add-on's web UI, reachable through Ingress) and Kapacitor
+  # (its alerting/processing companion) are not used by any GA component. Off
+  # by default: two fewer long-running processes and two fewer InfluxDB
+  # accounts with ALL PRIVILEGES. Set either to true to get it back.
+  chronograf: false
+  kapacitor: false
   reporting: true
   ssl: true
   certfile: fullchain.pem
   keyfile: privkey.pem
-  envvars: ## optimized for ressource constrained devices 
+  # Optimised for resource-constrained devices.
+  envvars:
     - name: INFLUXDB_REPORTING_DISABLED
       value: "true"
     - name: INFLUXDB_DATA_CACHE_MAX_MEMORY_SIZE
@@ -52,10 +61,21 @@ options:
       value: "100ms"
     - name: INFLUXDB_DATA_TSM_USE_MADV_WILLNEED
       value: "false"
+    # InfluxDB's internal monitor samples its own statistics every 10 s and
+    # writes them to the _internal database. Collecting them estimates series
+    # and measurement cardinality with a HyperLogLog++ sketch, whose float64
+    # arithmetic dominates the process on this hardware: measured on an iHost
+    # (armv7) carrying 55 series, influxd sat at 18.5% of one core, and 1.9%
+    # with this set — a tenfold reduction for statistics nothing reads.
+    # Cardinality is still computed on demand (SHOW SERIES CARDINALITY).
+    - name: INFLUXDB_MONITOR_STORE_ENABLED
+      value: "false"
 schema:
   log_level: list(trace|debug|info|notice|warning|error|fatal)?
   auth: bool
   per_user_secrets: bool?
+  chronograf: bool?
+  kapacitor: bool?
   reporting: bool
   ssl: bool
   certfile: str
