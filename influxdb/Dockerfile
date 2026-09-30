@@ -10,10 +10,24 @@ ARG INFLUXDB_VERSION="1.8.10"
 # ~3%. aarch64/amd64 have no softfloat variant; they are built from the same tag
 # for provenance and to remove the unverifiable vendor binary uniformly.
 # The build FAILS CLOSED if the armv7 binary still links the software-float path.
+#
+# Toolchain and libraries: v1.8.10's own go.mod dates from 2021 (grpc 1.26,
+# golang.org/x/* from 2021) and the build used Go 1.19. The source build now
+# uses a current Go and raises the network/crypto libraries to the floors below
+# (Go's minimal version selection lifts their own dependencies with them). The
+# InfluxDB code, its storage engine and its configuration are unchanged — only
+# the compiler and the libraries it links move. influx_stress is built here too,
+# so no binary from the 2021 vendor .deb remains in /usr/bin/influx*.
+# The build FAILS CLOSED if `go get` cannot apply a floor, and asserts the
+# floors are in go.mod before compiling.
 # hadolint ignore=DL3006
-FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.19-bookworm AS influxbuild
+FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.26-bookworm AS influxbuild
 ARG BUILD_ARCH
 ARG INFLUXDB_VERSION
+ARG GRPC_FLOOR="v1.83.2"
+ARG XCRYPTO_FLOOR="v0.55.0"
+ARG OTELSDK_FLOOR="v1.44.0"
+ARG GOJOSE_FLOOR="v4.1.4"
 # hadolint ignore=DL3003
 RUN set -eux; \
     git clone --depth 1 --branch "v${INFLUXDB_VERSION}" https://github.com/influxdata/influxdb.git /src; \
@@ -24,8 +38,15 @@ RUN set -eux; \
       amd64)   export GOARCH=amd64 ;; \
       *) echo "unsupported BUILD_ARCH: ${BUILD_ARCH}"; exit 1 ;; \
     esac; \
-    export CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=mod; \
-    for c in influxd influx influx_inspect; do \
+    export CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=mod GOTOOLCHAIN=local; \
+    go get \
+      "google.golang.org/grpc@${GRPC_FLOOR}" \
+      "golang.org/x/crypto@${XCRYPTO_FLOOR}" \
+      "go.opentelemetry.io/otel/sdk@${OTELSDK_FLOOR}" \
+      "github.com/go-jose/go-jose/v4@${GOJOSE_FLOOR}"; \
+    grep -q "google.golang.org/grpc ${GRPC_FLOOR}" go.mod; \
+    grep -q "golang.org/x/crypto ${XCRYPTO_FLOOR}" go.mod; \
+    for c in influxd influx influx_inspect influx_stress; do \
       go build -trimpath -ldflags "-s -w -X main.version=${INFLUXDB_VERSION}" -o "/out/${c}" "./cmd/${c}"; \
     done; \
     # Red/green proof, in the build: GOARM=7 dead-code-eliminates the softfloat
@@ -113,11 +134,12 @@ RUN \
 
 
 # Replace the vendor influx binaries (GOARM=5 on armv7) with our GOARM=7 source
-# build. Chronograf/Kapacitor stay from the .deb — they are already hardware-fp
+# build (current Go toolchain, see the build stage). Chronograf/Kapacitor stay from the .deb — they are already hardware-fp
 # and are optional/off by default anyway.
 COPY --from=influxbuild /out/influxd /usr/bin/influxd
 COPY --from=influxbuild /out/influx /usr/bin/influx
 COPY --from=influxbuild /out/influx_inspect /usr/bin/influx_inspect
+COPY --from=influxbuild /out/influx_stress /usr/bin/influx_stress
 
 # Copy root filesystem
 COPY rootfs /
