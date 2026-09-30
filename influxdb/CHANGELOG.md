@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.0.21 (2026-09-30)
+
+- **Chronograf and Kapacitor now come from GreenAutarky's maintenance forks**
+  instead of InfluxData's packages: Kapacitor 1.5.9 and Chronograf 1.10.9
+  (was 1.10.2), each rebuilt with Go 1.26 and current dependency versions
+  (grpc 1.83, current `golang.org/x/*`, among others) for armv7 (hardware
+  float), aarch64 and amd64. The release tarballs are pinned by sha256 per
+  arch and the build fails closed on a mismatch. Every change in the forks is
+  listed in their `GA-PATCHES.md`:
+  [kapacitor](https://github.com/greenautarky/kapacitor/blob/v1.5.9-ga.1/GA-PATCHES.md),
+  [chronograf](https://github.com/greenautarky/chronograf/blob/v1.10.9-ga.1/GA-PATCHES.md).
+- Chronograf 1.10.2 → 1.10.9 is a patch-level update; its BoltDB store gains
+  optional fields only. Kapacitor stays at 1.5.9.
+- Both remain optional and off by default. No change to the options, the
+  credential model, InfluxDB, or its storage format.
+
 ## 0.0.20 (2026-09-30)
 
 - **InfluxDB stays at 1.8.10; its toolchain and libraries move.** The

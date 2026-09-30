@@ -68,8 +68,24 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Setup base system
 ARG BUILD_ARCH
 ARG INFLUXDB_VERSION="1.8.10"
-ARG CHRONOGRAF_VERSION="1.10.2"
-ARG KAPACITOR_VERSION="1.5.9-1"
+# Chronograf and Kapacitor come from GreenAutarky's maintenance forks, not from
+# InfluxData's packages. InfluxData's last armhf builds are Kapacitor 1.5.9
+# (2021, Go 1.15) and Chronograf 1.10.9; the forks keep exactly those releases
+# and rebuild them with Go 1.26 and current dependency versions, for all three
+# arches. Every change is listed in GA-PATCHES.md in each fork:
+#   https://github.com/greenautarky/kapacitor   (branch ga/1.5.9-patched)
+#   https://github.com/greenautarky/chronograf  (branch ga/1.10.9-patched)
+# The tarballs are pinned by sha256 per arch; the build FAILS CLOSED on a
+# mismatch. To move to a new fork release, change the tag and all six hashes
+# from the release's SHA256SUMS.
+ARG CHRONOGRAF_RELEASE="1.10.9-ga.1"
+ARG KAPACITOR_RELEASE="1.5.9-ga.1"
+ARG CHRONOGRAF_SHA256_ARMV7="f15ab0d067deca2dfca1111fee9ea901764a445321aba12d44c10e513e326da4"
+ARG CHRONOGRAF_SHA256_AARCH64="5a76d8e55ab32885d40741ea58d18b184ac3abdf01fd97d03490e163de9764b1"
+ARG CHRONOGRAF_SHA256_AMD64="9494ec75e1cafe6562d82c1602f64793a9c79517bdb430e3c28ee34e7a8ee1ba"
+ARG KAPACITOR_SHA256_ARMV7="222af37660439842de6e29fef1694008f46942b54906de487297df3355739017"
+ARG KAPACITOR_SHA256_AARCH64="41b92240d802e2e065c8ef1cfb94722a69270ade3ce9f30eba29f5001f7bf749"
+ARG KAPACITOR_SHA256_AMD64="79d0fb253d7a8194d0eefdaa9ab1911df6f6c473de93e9e38a431c56eba94380"
 # `apt-get upgrade` before the installs. The Debian base we own pins nothing —
 # unlike the Alpine bases, whose constraints live in /etc/apk/world — but it is
 # BUILT once and then sits: openssl was current the day it was made and is not
@@ -113,15 +129,33 @@ RUN \
     && curl -J -L -o /tmp/influxdb.deb \
         "https://dl.influxdata.com/influxdb/releases/influxdb_${INFLUXDB_VERSION}_${ARCH}.deb" \
     \
-    && curl -J -L -o /tmp/chronograf.deb \
-        "https://dl.influxdata.com/chronograf/releases/chronograf_${CHRONOGRAF_VERSION}_${ARCH}.deb" \
-    \
-    && curl -J -L -o /tmp/kapacitor.deb \
-        "https://dl.influxdata.com/kapacitor/releases/kapacitor_${KAPACITOR_VERSION}_${ARCH}.deb" \
-    \
     && dpkg --install /tmp/influxdb.deb \
-    && dpkg --install /tmp/chronograf.deb \
-    && dpkg --install /tmp/kapacitor.deb \
+    \
+    && case "${BUILD_ARCH}" in \
+         armv7)   CHR_SHA="${CHRONOGRAF_SHA256_ARMV7}";   KAP_SHA="${KAPACITOR_SHA256_ARMV7}" ;; \
+         aarch64) CHR_SHA="${CHRONOGRAF_SHA256_AARCH64}"; KAP_SHA="${KAPACITOR_SHA256_AARCH64}" ;; \
+         amd64)   CHR_SHA="${CHRONOGRAF_SHA256_AMD64}";   KAP_SHA="${KAPACITOR_SHA256_AMD64}" ;; \
+         *) echo "unsupported BUILD_ARCH: ${BUILD_ARCH}"; exit 1 ;; \
+       esac \
+    && curl -fsSL -o /tmp/chronograf.tar.gz \
+        "https://github.com/greenautarky/chronograf/releases/download/v${CHRONOGRAF_RELEASE}/chronograf-${CHRONOGRAF_RELEASE}-linux-${BUILD_ARCH}.tar.gz" \
+    && curl -fsSL -o /tmp/kapacitor.tar.gz \
+        "https://github.com/greenautarky/kapacitor/releases/download/v${KAPACITOR_RELEASE}/kapacitor-${KAPACITOR_RELEASE}-linux-${BUILD_ARCH}.tar.gz" \
+    && echo "${CHR_SHA}  /tmp/chronograf.tar.gz" | sha256sum -c - \
+    && echo "${KAP_SHA}  /tmp/kapacitor.tar.gz" | sha256sum -c - \
+    && mkdir -p /tmp/chronograf /tmp/kapacitor \
+    && tar -xzf /tmp/chronograf.tar.gz -C /tmp/chronograf \
+    && tar -xzf /tmp/kapacitor.tar.gz -C /tmp/kapacitor \
+    && install -m 0755 /tmp/chronograf/usr/bin/chronograf /tmp/chronograf/usr/bin/chronoctl /usr/bin/ \
+    && install -m 0755 /tmp/kapacitor/usr/bin/kapacitord /tmp/kapacitor/usr/bin/kapacitor /tmp/kapacitor/usr/bin/tickfmt /usr/bin/ \
+    && mkdir -p /usr/share/chronograf /etc/kapacitor \
+    && cp -r /tmp/chronograf/usr/share/chronograf/canned /tmp/chronograf/usr/share/chronograf/protoboards /usr/share/chronograf/ \
+    && install -m 0644 /tmp/kapacitor/etc/kapacitor/kapacitor.conf /etc/kapacitor/kapacitor.conf \
+    # Same system accounts and home directories the upstream packages created.
+    && useradd --system -U -M -d /var/lib/chronograf -s /bin/false chronograf \
+    && useradd --system -U -M -d /var/lib/kapacitor -s /bin/false kapacitor \
+    && install -d -o chronograf -g chronograf /var/lib/chronograf \
+    && install -d -o kapacitor -g kapacitor /var/lib/kapacitor \
     \
     && rm -fr \
         /tmp/* \
@@ -134,8 +168,9 @@ RUN \
 
 
 # Replace the vendor influx binaries (GOARM=5 on armv7) with our GOARM=7 source
-# build (current Go toolchain, see the build stage). Chronograf/Kapacitor stay from the .deb — they are already hardware-fp
-# and are optional/off by default anyway.
+# build (current Go toolchain, see the build stage). Chronograf/Kapacitor are
+# installed above from the pinned fork releases (hardware-float on armv7) and
+# stay optional and off by default.
 COPY --from=influxbuild /out/influxd /usr/bin/influxd
 COPY --from=influxbuild /out/influx /usr/bin/influx
 COPY --from=influxbuild /out/influx_inspect /usr/bin/influx_inspect
