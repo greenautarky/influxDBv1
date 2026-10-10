@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.0.22 (2026-10-10)
+
+- **Home Assistant's raw history gets a retention: new option `ha_db_retention`,
+  default `90d`** (Odoo #1224). Until now `ga_homeassistant_db`'s `autogen`
+  policy was infinite, so the database only grew.
+  - Margin: the longest read of it by a GA component is 7 days (default add-on:
+    transfer coefficient, heating usage).
+  - Accepted values: `<n>h|d|w` or `INF` (retention off). An invalid value
+    leaves the policy unchanged, with a warning.
+  - **Irreversible on the device:** shortening the retention deletes older
+    shards at InfluxDB's next retention check.
+- **`gd_data` is deliberately not bounded.** It holds the learned heating
+  values (heat-up rate, hydraulic balancing, session analysis). They are read
+  back with a 365-day fallback and as "the latest value, however old".
+  Expiring them would move a room that has not been re-balanced back onto the
+  built-in default, which would change heating behaviour.
+- A failed `ALTER RETENTION POLICY` is now logged at error. It used to be
+  silent. This also applies to `ga_glances`.
+- `tests/test_ha_db_retention.sh` (own workflow `ha-db-retention.yml`)
+  extracts the functions from the live init script and checks:
+  - the default, 30d and INF;
+  - an invalid value and an injection-shaped value are refused;
+  - a failed ALTER is loud;
+  - `gd_data` is never touched.
+
 ## 0.0.21 (2026-09-30)
 
 - **Chronograf and Kapacitor now come from GreenAutarky's maintenance forks**
