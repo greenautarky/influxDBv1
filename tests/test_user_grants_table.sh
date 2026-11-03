@@ -3,10 +3,10 @@
 #   sourced from the script under test — the linter cannot follow that.
 # SC2015: `cond && ok ... || bad ...` is this file's assertion idiom. `ok` and
 #   `bad` are printf wrappers that cannot fail, so the C-branch is unreachable.
-# SC2317: the stubs below are called indirectly, by the sourced functions.
+# SC2317, SC2329: the stubs below are called indirectly, by the sourced functions.
 # NB: a comment whose first word after "#" is the linter's name is parsed as a
 #   DIRECTIVE and fails — SC1072/SC1073. Hence the wording above.
-# shellcheck disable=SC2034,SC2015,SC2317
+# shellcheck disable=SC2034,SC2015,SC2317,SC2329
 # Tests for the per-user credential table in 00_create-db_and_users.sh.
 #
 # WHAT THIS GUARDS. The add-on hands each consumer a manifest entry AND grants

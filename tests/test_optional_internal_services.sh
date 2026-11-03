@@ -295,7 +295,7 @@ else
           DROPLOG="${SANDBOX}/drops.txt"; : > "${DROPLOG}"
           # Bound OUTSIDE the stub: inside it, $2 is the stub's own argument.
           SHOW_USERS_OUTPUT="$2"
-          # shellcheck disable=SC2317
+          # shellcheck disable=SC2317,SC2329
           influx() {
             if [[ "$*" == *"SHOW USERS"* ]]; then printf 'user admin\n%s\n' "${SHOW_USERS_OUTPUT}"
             else printf '%s\n' "$*" >> "${DROPLOG}"; fi
