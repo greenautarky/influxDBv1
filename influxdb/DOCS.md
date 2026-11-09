@@ -90,6 +90,14 @@ InfluxDB integration) are wired to receive their per-user credential** —
 otherwise, with `auth: true`, they will fail to authenticate. See the
 migration ordering in Odoo #548.
 
+### Option: `ha_db_retention`
+
+How long Home Assistant's raw history (`ga_homeassistant_db`) is kept. The
+default is `INF` (unlimited): nothing is deleted. Set `<n>h`, `<n>d` or `<n>w`
+(for example `90d`) to bound it. **Irreversible:** InfluxDB deletes data older
+than the value at its next retention check. The learned heating values
+(`gd_data`) are never bounded.
+
 ### Option: `reporting`
 
 This option allows you to disable the reporting of usage data to InfluxData.

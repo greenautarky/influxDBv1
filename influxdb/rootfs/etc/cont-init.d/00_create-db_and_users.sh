@@ -310,7 +310,10 @@ set_retention_policy() {
     local duration="$2"
     if influx -execute "SHOW RETENTION POLICIES ON ${db}" | grep -q "autogen"; then
         bashio::log.info "Setting retention policy for database ${db} to ${duration}"
-        influx -execute "ALTER RETENTION POLICY autogen ON ${db} DURATION ${duration} REPLICATION 1 DEFAULT" &> /dev/null || true
+        # Loud on failure: a retention that silently does not apply leaves the
+        # database growing without bound while the log says it was set.
+        influx -execute "ALTER RETENTION POLICY autogen ON ${db} DURATION ${duration} REPLICATION 1 DEFAULT" &> /dev/null \
+            || bashio::log.error "ALTER RETENTION POLICY on ${db} to ${duration} FAILED — retention unchanged"
     else
         bashio::log.info "Retention policy already set for database ${db}"
     fi
@@ -339,6 +342,32 @@ create_database "ga_glances"
 
 # Set retention policy for ga_glances
 set_retention_policy "ga_glances" "7d"
+
+# Home Assistant's raw state history (option ha_db_retention, default INF =
+# unlimited, Odoo #1224/#1514). Its autogen policy is infinite and stays so
+# unless an operator sets a value: the default NEVER deletes data. The longest
+# read of it by a GA component is 7 days (default add-on: transfer
+# coefficient, heating usage), so a bound of 30d or more is safe to offer.
+#
+# gd_data is deliberately NOT bounded: it holds the LEARNED values (heat-up
+# rate, hydraulic balancing, session analysis), read back with a 365-day
+# fallback and as "the latest value, however old". Expiring them would move a
+# room that has not been re-balanced back onto the built-in default — a change
+# in heating behaviour.
+#
+# INF (the default) is unlimited and also switches a set retention off again. Shortening it deletes the older shards at
+# InfluxDB's next retention check; that cannot be undone on the device.
+apply_ha_db_retention() {
+    local want
+    want="$(bashio::config 'ha_db_retention')"
+    want="${want:-INF}"
+    if [[ ! "${want}" =~ ^(INF|[0-9]+[hdw])$ ]]; then
+        bashio::log.warning "ha_db_retention='${want}' is not INF or <n>h/d/w — retention of ga_homeassistant_db left unchanged"
+        return 0
+    fi
+    set_retention_policy "ga_homeassistant_db" "${want}"
+}
+apply_ha_db_retention
 
 if [[ "${PER_USER}" == "true" ]]; then
     # Pre-create every database named in the table, so a least-privileged

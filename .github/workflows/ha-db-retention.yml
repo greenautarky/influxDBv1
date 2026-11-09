@@ -1,0 +1,20 @@
+---
+name: HA DB retention
+
+# Own workflow for the same reason as grants-table.yml: it depends on nothing
+# but bash, and it reads the functions from the LIVE init script.
+
+"on":
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ha-db-retention:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ga_homeassistant_db bounded, gd_data never, failures loud
+        run: bash tests/test_ha_db_retention.sh
