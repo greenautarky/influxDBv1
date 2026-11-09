@@ -1,6 +1,6 @@
 ---
 name: ga_InfluxDBv1
-version: 0.0.22
+version: 0.0.23
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
@@ -47,8 +47,9 @@ options:
   kapacitor: false
   reporting: true
   # Retention of Home Assistant's raw history (ga_homeassistant_db): <n>h|d|w or INF.
+  # Default INF = unlimited: nothing is deleted unless an operator sets a value.
   # gd_data (learned heating values) is never bounded. See the init script.
-  ha_db_retention: 90d
+  ha_db_retention: INF
   ssl: true
   certfile: fullchain.pem
   keyfile: privkey.pem

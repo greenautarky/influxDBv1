@@ -343,10 +343,11 @@ create_database "ga_glances"
 # Set retention policy for ga_glances
 set_retention_policy "ga_glances" "7d"
 
-# Home Assistant's raw state history (option ha_db_retention, default 90d,
-# Odoo #1224). Its autogen policy was infinite, so the database only grew. The
-# longest read of it by a GA component is 7 days (default add-on: transfer
-# coefficient, heating usage); 90d keeps a wide margin for diagnosis.
+# Home Assistant's raw state history (option ha_db_retention, default INF =
+# unlimited, Odoo #1224/#1514). Its autogen policy is infinite and stays so
+# unless an operator sets a value: the default NEVER deletes data. The longest
+# read of it by a GA component is 7 days (default add-on: transfer
+# coefficient, heating usage), so a bound of 30d or more is safe to offer.
 #
 # gd_data is deliberately NOT bounded: it holds the LEARNED values (heat-up
 # rate, hydraulic balancing, session analysis), read back with a 365-day
@@ -354,12 +355,12 @@ set_retention_policy "ga_glances" "7d"
 # room that has not been re-balanced back onto the built-in default — a change
 # in heating behaviour.
 #
-# INF switches retention off again. Shortening it deletes the older shards at
+# INF (the default) is unlimited and also switches a set retention off again. Shortening it deletes the older shards at
 # InfluxDB's next retention check; that cannot be undone on the device.
 apply_ha_db_retention() {
     local want
     want="$(bashio::config 'ha_db_retention')"
-    want="${want:-90d}"
+    want="${want:-INF}"
     if [[ ! "${want}" =~ ^(INF|[0-9]+[hdw])$ ]]; then
         bashio::log.warning "ha_db_retention='${want}' is not INF or <n>h/d/w — retention of ga_homeassistant_db left unchanged"
         return 0

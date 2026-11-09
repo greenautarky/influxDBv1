@@ -1,15 +1,17 @@
 # Changelog
 
-## 0.0.22 (2026-10-10)
+## 0.0.23 (2026-11-09)
 
 - **Home Assistant's raw history gets a retention: new option `ha_db_retention`,
-  default `90d`** (Odoo #1224). Until now `ga_homeassistant_db`'s `autogen`
-  policy was infinite, so the database only grew.
+  default `INF` (unlimited)** (Odoo #1224, #1514). `ga_homeassistant_db`'s
+  `autogen` policy is infinite and **stays infinite on update**: nothing is
+  deleted unless an operator sets a value. The option is only offered.
   - Margin: the longest read of it by a GA component is 7 days (default add-on:
     transfer coefficient, heating usage).
-  - Accepted values: `<n>h|d|w` or `INF` (retention off). An invalid value
+  - Accepted values: `<n>h|d|w` or `INF` (unlimited, the default). An invalid value
     leaves the policy unchanged, with a warning.
-  - **Irreversible on the device:** shortening the retention deletes older
+  - **Irreversible on the device once an operator sets a finite value:**
+    shortening the retention deletes older
     shards at InfluxDB's next retention check.
 - **`gd_data` is deliberately not bounded.** It holds the learned heating
   values (heat-up rate, hydraulic balancing, session analysis). They are read

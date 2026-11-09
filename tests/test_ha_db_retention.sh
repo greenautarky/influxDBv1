@@ -50,7 +50,15 @@ run() {  # run <option value or __unset__> [influx exit code for ALTER]
 }
 alter() { grep -c 'ALTER RETENTION POLICY autogen ON ga_homeassistant_db DURATION '"$1"' ' "$W/trace"; }
 
-run __unset__; [ "$(alter 90d)" = 1 ] && ok "default: ga_homeassistant_db -> 90d" || bad "default did not ALTER to 90d: $(cat "$W/trace")"
+# THE DEFAULT MUST NEVER DELETE (Odoo #1514). Assert on the statements actually
+# issued, not on the option value: with the option unset, and with the shipped
+# default from config.yaml, the only ALTER allowed is DURATION INF.
+finite_alter() { grep -E '^influx .*ALTER RETENTION POLICY' "$W/trace" | grep -vcE 'DURATION INF '; }
+SHIPPED="$(sed -n 's/^  ha_db_retention: *//p' "${REPO_ROOT}/influxdb/config.yaml" | head -1)"
+[ "$SHIPPED" = INF ] && ok "shipped default in config.yaml is INF" || bad "shipped default is '${SHIPPED}', not INF"
+run __unset__; [ "$(finite_alter)" = 0 ] && ok "option unset: no finite-duration ALTER issued" || bad "option unset issued a finite ALTER: $(cat "$W/trace")"
+run "$SHIPPED"; [ "$(finite_alter)" = 0 ] && ok "shipped default: no finite-duration ALTER issued" || bad "shipped default issued a finite ALTER: $(cat "$W/trace")"
+run __unset__; [ "$(alter INF)" = 1 ] && ok "default: ga_homeassistant_db -> INF (unlimited)" || bad "default did not ALTER to INF"
 run 30d;       [ "$(alter 30d)" = 1 ] && ok "option 30d applied" || bad "30d not applied"
 run INF;       [ "$(alter INF)" = 1 ] && ok "option INF switches retention off" || bad "INF not applied"
 run 3x;        { ! grep -q ALTER "$W/trace" && grep -q '^WARN .*3x' "$W/trace"; } && ok "invalid value: no ALTER, warning logged" || bad "invalid value handled wrongly: $(cat "$W/trace")"
