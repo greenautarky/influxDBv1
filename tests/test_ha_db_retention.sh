@@ -10,7 +10,7 @@
 # ==============================================================================
 # Stubs are called indirectly (from the sourced functions), which shellcheck
 # cannot see; the A && B || C lines report ok/bad and both are side-effect only.
-# shellcheck disable=SC2317,SC2015
+# shellcheck disable=SC2317,SC2015,SC2329
 set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="${REPO_ROOT}/influxdb/rootfs/etc/cont-init.d/00_create-db_and_users.sh"
