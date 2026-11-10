@@ -83,7 +83,7 @@ jobs:
               }' "$f"
           )
 
-          if [-z "${ver:-}"]; then
+          if [ -z "${ver:-}" ]; then
             echo "::error::Could not read version from $f"
             echo "First 30 lines for inspection:"; nl -ba "$f" | sed -n '1,30p'
             exit 1
@@ -219,12 +219,12 @@ jobs:
           tags="${{ steps.meta.outputs.tags }}"
           pushed=0
           while IFS= read -r t; do
-            [-z "$t"] && continue
+            [ -z "$t" ] && continue
             docker tag local/ga_influxdbv1:scan "$t"
             docker push "$t"
             pushed=$((pushed + 1))
           done <<< "$tags"
-          if ["$pushed" -eq 0]; then
+          if [ "$pushed" -eq 0 ]; then
             echo "::error::no tags resolved from metadata-action — nothing was pushed"
             exit 1
           fi
@@ -246,18 +246,23 @@ jobs:
   # never reports success for a sync it did not do.
   sync-downstream:
     needs: build
-    # The called workflow declares `contents: write` — it pushes the store
-    # entry — and a called workflow can never hold more permission than its
-    # caller. This file granted `contents: read` at the workflow level, so the
-    # run could not be CREATED at all: no jobs, no checks, no log, and the
-    # publish simply did not happen. Measured 2026-08-26, immediately after the
-    # reusable workflow gained that declaration.
+    # The called workflow declares `contents: write` and `pull-requests: write`
+    # (it opens the store PR; the store-side dispatch path does that with its
+    # own GITHUB_TOKEN), and a called workflow can never hold more permission
+    # than its caller. This file granted `contents: read` at the workflow level,
+    # so the run could not be CREATED at all: no jobs, no checks, no log, and
+    # the publish simply did not happen. Measured 2026-08-26, immediately after
+    # the reusable workflow gained that declaration. `pull-requests: write`
+    # was added to the called workflow on 2026-09-24 and must be granted here
+    # for the same reason.
     #
     # Granted per JOB, not raised at the workflow level, so the build jobs keep
-    # read-only contents. The token here is scoped to THIS repository; the push
-    # to the store still uses the caller's PAT on this path.
+    # read-only contents. The token here is scoped to THIS repository; the
+    # store branch and PR are still made with the caller's PAT on this path.
+    # The store PR is opened, never merged by automation.
     permissions:
       contents: write
+      pull-requests: write
       packages: read
     if: github.ref_name == github.event.repository.default_branch
     # NOT ga-ops. That repository is PRIVATE and this one is PUBLIC, and a
