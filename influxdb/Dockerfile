@@ -122,6 +122,20 @@ RUN \
     \
     && luarocks install lua-resty-http 0.15-0 \
     \
+    # luarocks is a BUILD tool here: it dropped one pure-Lua module (lua-resty-http,
+    # read by nginx's LuaJIT through its default /usr/local/share/lua/5.1 path) and
+    # is never run again. Its Depends chain (liblua5.1-dev -> libc6-dev ->
+    # linux-libc-dev, plus lua5.1/wget/zip/unzip) is a C toolchain's headers that
+    # nothing at runtime reads, and every kernel-header CVE in Debian then blocks
+    # this image at the CVE gate (CVE-2026-99306, 2026-11-18, fixable CRITICAL in
+    # linux-libc-dev 6.12.115-2 -> 6.12.117-1). Purged, with what only it pulled in.
+    # The module is not a dpkg file, so it stays; the asserts fail the build closed
+    # if either half of that is wrong.
+    && apt-get purge -y --auto-remove luarocks \
+    && test -f /usr/local/share/lua/5.1/resty/http.lua \
+    && ! dpkg -s linux-libc-dev >/dev/null 2>&1 \
+    && dpkg -s libnginx-mod-http-lua >/dev/null 2>&1 \
+    \
     && ARCH="${BUILD_ARCH}" \
     && if [ "${BUILD_ARCH}" = "aarch64" ]; then ARCH="arm64"; fi \
     && if [ "${BUILD_ARCH}" = "armv7" ]; then ARCH="armhf"; fi \
