@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.0.23 (2026-11-18)
+
+- **Security (CVE-2026-99306, CRITICAL, Linux kernel ceph mdsmap bound check):**
+  the image carried the Debian package `linux-libc-dev` 6.12.115-2 (fixed in
+  6.12.117-1), pulled in only as a dependency of `luarocks`, a build tool that
+  is not needed after the one Lua module (`lua-resty-http`) is installed. The
+  build now removes `luarocks` and the packages only it pulled in
+  (`linux-libc-dev`, `libc6-dev`, `liblua5.1-0-dev`, `lua5.1`, `wget`, `zip`,
+  `unzip`, ...) and fails closed if `linux-libc-dev` is still present or the Lua
+  module or the nginx Lua module is missing. Kernel-header CVEs can no longer
+  block this image. No change to InfluxDB, nginx, the options, the credential
+  model or the storage format; the image is smaller.
+
 ## 0.0.21 (2026-09-30)
 
 - **Chronograf and Kapacitor now come from GreenAutarky's maintenance forks**
