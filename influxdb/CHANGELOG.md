@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.24 (2026-11-19)
+
+- **Chronograf and Kapacitor removed** (Odoo #1973, decided by Thomas 2026-11-12).
+  No GA component used them and they were off by default; they were about 185 MB
+  of the armv7 image and two InfluxDB accounts with ALL PRIVILEGES.
+- The options `chronograf` / `kapacitor` stay in the schema so stored device
+  configurations still validate; `true` now only logs a warning. A leftover
+  `chronograf` / `kapacitor` account is dropped on start, as before when off.
+- The Ingress panel answers with a short notice instead of proxying to Chronograf.
+
 ## 0.0.23 (2026-11-18)
 
 - **Security (CVE-2026-99306, CRITICAL, Linux kernel ceph mdsmap bound check):**

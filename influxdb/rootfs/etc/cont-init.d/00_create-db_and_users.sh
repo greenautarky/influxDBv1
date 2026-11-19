@@ -127,13 +127,16 @@ DATA_USERS="ga_ha_influx_user ga_default ga_hmvapp ga_telegraf"
 # The two lists are derived from ONE loop rather than written out twice: a tool
 # that is enabled but missing from ADMIN_USERS gets no account and fails to
 # authenticate; a tool that is disabled but still listed keeps its privilege.
+#
+# Since 0.0.24 both tools are REMOVED from the image (Odoo #1973, Thomas
+# 2026-11-12). The options stay in the schema so a device that stored `true`
+# still validates (N61); a stored `true` is ignored with a warning, and an
+# account left behind by an earlier configuration is dropped.
 ENABLED_TOOLS=""
-DISABLED_TOOLS=""
+DISABLED_TOOLS="chronograf kapacitor"
 for tool in chronograf kapacitor; do
     if bashio::config.true "${tool}"; then
-        ENABLED_TOOLS="${ENABLED_TOOLS}${ENABLED_TOOLS:+ }${tool}"
-    else
-        DISABLED_TOOLS="${DISABLED_TOOLS}${DISABLED_TOOLS:+ }${tool}"
+        bashio::log.warning "Option '${tool}' is ignored: ${tool} was removed from this add-on in 0.0.24 (Odoo #1973). Its InfluxDB account is dropped."
     fi
 done
 ADMIN_USERS="ga_influx_admin${ENABLED_TOOLS:+ ${ENABLED_TOOLS}}"
@@ -168,37 +171,12 @@ provision_per_user_secrets() {
             USER_PW[$u]="$(gen_password)"
         fi
     done
-    # chronograf and kapacitor read their password from /data/secret — three
-    # places do: cont-init.d/kapacitor.sh, services.d/kapacitor/run and
-    # services.d/chronograf/run. This branch used to DELETE that file, on the
-    # reasoning that a shared secret must not linger once per-user mode is on.
-    # The reasoning is right and the consequence was fatal: cont-init died with
-    #
-    #   /etc/cont-init.d/kapacitor.sh: line 8: /data/secret: No such file or directory
-    #   s6-rc: unable to start service legacy-cont-init  ->  container stopped
-    #
-    # Measured on a bench device 2026-08-26, the second time per_user_secrets
-    # was ever enabled anywhere. Like the SIGPIPE before it, it could not have
-    # been found by running the add-on: this branch has never executed.
-    #
-    # So the file stays, and it now holds ONE secret used by exactly the two
-    # internal tools that read it. That is a deliberate, stated compromise:
-    #
-    #   the DATA users — ga_ha_influx_user, ga_default, ga_hmvapp, ga_telegraf —
-    #   each get a distinct password and a least-privilege grant, which is the
-    #   whole point of this mode;
-    #   ga_influx_admin gets its own distinct password and is not in this file;
-    #   chronograf and kapacitor share one, because rewiring three scripts to
-    #   read a manifest is a separate change and this one is already fixing a
-    #   container that would not start.
-    #
-    # Even so it is strictly narrower than legacy mode, where all six share one
-    # password AND all six hold ALL PRIVILEGES.
-    USER_PW[chronograf]="$(gen_password)"
-    USER_PW[kapacitor]="${USER_PW[chronograf]}"
-    printf '%s\n' "${USER_PW[chronograf]}" > /data/secret
-    chmod 600 /data/secret
-    bashio::log.info "Wrote /data/secret for the internal tools (chronograf, kapacitor)"
+    # Until 0.0.23 this branch also wrote /data/secret for chronograf and
+    # kapacitor, the only readers of that file in per-user mode. Both were
+    # removed in 0.0.24 (Odoo #1973), so per-user mode no longer writes it.
+    # It is NOT deleted either: the legacy branch reads /data/secret as its
+    # stored shared secret, and deleting an artefact another branch reads is
+    # the failure class tests/test_user_grants_table.sh guards.
 
     write_users_json
 }

@@ -5,10 +5,9 @@ It's useful for recording metrics, sensor data, events,
 and performing analytics. It exposes an HTTP API for client interaction and is
 often used in combination with Grafana to visualize the data.
 
-This add-on comes with Chronograf & Kapacitor pre-installed as well. Which
-gives you a nice InfluxDB admin interface for managing your users, databases,
-data retention settings, and lets you peek inside the database using the
-Data Explorer.
+Chronograf and Kapacitor were removed from this add-on in 0.0.24 (Odoo #1973):
+no GA component used them. The options `chronograf` and `kapacitor` are still
+accepted so stored configurations stay valid, but they have no effect.
 
 ## Installation
 
