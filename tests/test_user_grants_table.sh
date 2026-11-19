@@ -128,12 +128,20 @@ rm -f "${_fixture}"
 check "the deletion extractor still works (must-fail fixture)" "${_found}" "/data/decoy-path"
 ok "real deletions in the provisioning script: ${checked_paths}"
 
-# And the must-fail half on the real subject: a path the rootfs reads must be
-# reported if the script ever deletes it again.
-_readers="$(grep -rlF '/data/secret' "${ROOTFS}/etc" 2>/dev/null | grep -vc '00_create-db' || echo 0)"
-[ "${_readers}" -ge 1 ] \
-    && ok "/data/secret still has ${_readers} reader(s) — so deleting it would be caught" \
-    || bad "/data/secret has readers" "none found; the guard above would be vacuous"
+# And the must-fail half of the READER side. Until 0.0.23 it leaned on a live
+# reader (chronograf/kapacitor read /data/secret); since 0.0.24 (Odoo #1973) no
+# other rootfs file reads a path this script touches, so a live subject would
+# leave the guard vacuous. The reader detector is proven on a fixture instead,
+# with the exact command the loop above uses: a reader outside the provisioning
+# script must be found, the provisioning script itself must not count.
+_fx="$(mktemp -d)"; mkdir -p "${_fx}/etc/services.d/x"
+printf 'cat /data/decoy-secret\n' > "${_fx}/etc/services.d/x/run"
+printf 'rm -f /data/decoy-secret\n' > "${_fx}/etc/00_create-db_and_users.sh"
+_found_readers="$(grep -rlF '/data/decoy-secret' "${_fx}/etc" 2>/dev/null \
+                  | grep -v '00_create-db_and_users' | sed "s|${_fx}||" || true)"
+rm -rf "${_fx}"
+check "the reader detector finds a reader outside the provisioning script (fixture)" \
+      "${_found_readers}" "/etc/services.d/x/run"
 
 echo "== the table itself =="
 

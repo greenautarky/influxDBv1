@@ -182,9 +182,9 @@ else
     for combo in "false false" "true false" "true true"; do
       # shellcheck disable=SC2086
       set -- ${combo}
+      WARNLOG="${SANDBOX}/warn.txt"; : > "${WARNLOG}"
       # shellcheck source=/dev/null
       # shellcheck disable=SC1091,SC2030,SC2031
-      WARNLOG="${SANDBOX}/warn.txt"; : > "${WARNLOG}"
       OUT="$( export TRACE="${WARNLOG}"
               source "${SANDBOX}/bashio-shim.sh"
               CFG_chronograf="$1" CFG_kapacitor="$2"
