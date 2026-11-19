@@ -127,13 +127,16 @@ DATA_USERS="ga_ha_influx_user ga_default ga_hmvapp ga_telegraf"
 # The two lists are derived from ONE loop rather than written out twice: a tool
 # that is enabled but missing from ADMIN_USERS gets no account and fails to
 # authenticate; a tool that is disabled but still listed keeps its privilege.
+#
+# Since 0.0.24 both tools are REMOVED from the image (Odoo #1973, Thomas
+# 2026-11-12). The options stay in the schema so a device that stored `true`
+# still validates (N61); a stored `true` is ignored with a warning, and an
+# account left behind by an earlier configuration is dropped.
 ENABLED_TOOLS=""
-DISABLED_TOOLS=""
+DISABLED_TOOLS="chronograf kapacitor"
 for tool in chronograf kapacitor; do
     if bashio::config.true "${tool}"; then
-        ENABLED_TOOLS="${ENABLED_TOOLS}${ENABLED_TOOLS:+ }${tool}"
-    else
-        DISABLED_TOOLS="${DISABLED_TOOLS}${DISABLED_TOOLS:+ }${tool}"
+        bashio::log.warning "Option '${tool}' is ignored: ${tool} was removed from this add-on in 0.0.24 (Odoo #1973). Its InfluxDB account is dropped."
     fi
 done
 ADMIN_USERS="ga_influx_admin${ENABLED_TOOLS:+ ${ENABLED_TOOLS}}"

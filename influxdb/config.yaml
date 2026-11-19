@@ -1,6 +1,6 @@
 ---
 name: ga_InfluxDBv1
-version: 0.0.23
+version: 0.0.24
 slug: ga_influxdbv1
 description: Scalable datastore for metrics, events, and real-time analytics
 url: https://github.com/hassio-addons/addon-influxdb
@@ -39,10 +39,10 @@ options:
   # device's stored option across add-on updates, so existing devices are
   # unchanged and handled out of band. Delivery is ga_manager's converge step.
   per_user_secrets: true
-  # Chronograf (the add-on's web UI, reachable through Ingress) and Kapacitor
-  # (its alerting/processing companion) are not used by any GA component. Off
-  # by default: two fewer long-running processes and two fewer InfluxDB
-  # accounts with ALL PRIVILEGES. Set either to true to get it back.
+  # DEPRECATED, no effect since 0.0.24: Chronograf and Kapacitor were removed
+  # from the image (Odoo #1973). The keys stay in options AND schema so a device
+  # that stored `true` still passes the Supervisor's option validation (N61);
+  # a stored `true` only logs a warning.
   chronograf: false
   kapacitor: false
   reporting: true

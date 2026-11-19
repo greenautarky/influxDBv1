@@ -112,144 +112,59 @@ run_script() {
 traced() { grep -qE "$1" "${SANDBOX}/trace.txt"; }
 say()    { printf '\n%s\n' "$1"; }
 
-# ══ chronograf ═══════════════════════════════════════════════════════════════
-say "chronograf disabled  (the behaviour this option exists for)"
-CFG_chronograf=false CFG_kapacitor=false CFG_reporting=true rc=$(run_script etc/services.d/chronograf/run)
-if traced '^s6-svc -O .*/run/service/chronograf$'; then
-  ok "s6-svc -O keeps the service down"
+# ══ removal (0.0.24, Odoo #1973) ═════════════════════════════════════════════
+# Chronograf and Kapacitor are gone from the image. A stored `true` on a device
+# must start NOTHING, must not wait for anything, and must say so.
+say "chronograf / kapacitor are not shipped any more"
+for gone in etc/services.d/chronograf etc/services.d/kapacitor etc/cont-init.d/kapacitor.sh etc/kapacitor; do
+  if [[ -e "${ROOTFS}/${gone}" ]]; then
+    bad "still shipped: ${gone}"
+  else
+    ok "removed: ${gone}"
+  fi
+done
+DOCKERFILE="${REPO_ROOT}/influxdb/Dockerfile"
+if grep -vE '^\s*#' "${DOCKERFILE}" | grep -qiE 'chronograf|kapacitor'; then
+  bad "the Dockerfile still downloads or installs Chronograf/Kapacitor: $(grep -vE '^\s*#' "${DOCKERFILE}" | grep -iE 'chronograf|kapacitor' | head -1)"
 else
-  bad "s6-svc -O was not called — the supervisor would restart it in a loop"
-fi
-if traced '^chronograf '; then
-  bad "chronograf was started anyway"
-else
-  ok "chronograf binary not executed"
-fi
-
-say "chronograf enabled   (must-pass: original behaviour intact)"
-CFG_chronograf=true CFG_kapacitor=true CFG_reporting=true rc=$(run_script etc/services.d/chronograf/run)
-if traced '^chronograf .*--influxdb-url=http://localhost:8086'; then
-  ok "chronograf started with its InfluxDB URL"
-else
-  bad "chronograf did not start when enabled"
-fi
-if traced '^s6-svc -O'; then
-  bad "service was taken down although enabled"
-else
-  ok "service not taken down"
-fi
-
-say "chronograf enabled, kapacitor disabled"
-CFG_chronograf=true CFG_kapacitor=false CFG_reporting=true rc=$(run_script etc/services.d/chronograf/run)
-if traced '^chronograf .*--kapacitor-url'; then
-  bad "--kapacitor-url passed to a Kapacitor that is off"
-else
-  ok "no --kapacitor-url when Kapacitor is off"
-fi
-if traced '^s6-svwait .*kapacitor'; then
-  bad "waited for a Kapacitor that never starts"
-else
-  ok "no s6-svwait on a disabled Kapacitor"
-fi
-
-say "chronograf finish"
-CFG_chronograf=false rc=$(run_script etc/services.d/chronograf/finish 1)
-check "clean exit when disabled (exit 1 must not halt the add-on)" "0" "${rc}"
-if traced 'halt'; then
-  bad "add-on halted although the service was switched off"
-else
-  ok "add-on not halted"
-fi
-CFG_chronograf=true rc=$(run_script etc/services.d/chronograf/finish 1)
-if traced 'halt'; then
-  ok "a real crash still halts the add-on when enabled"
-else
-  bad "crash handling lost — a crashed Chronograf no longer halts the add-on"
-fi
-
-# ══ kapacitor ════════════════════════════════════════════════════════════════
-say "kapacitor disabled"
-CFG_kapacitor=false rc=$(run_script etc/services.d/kapacitor/run)
-if traced '^s6-svc -O .*/run/service/kapacitor$'; then
-  ok "s6-svc -O keeps the service down"
-else
-  bad "s6-svc -O was not called"
-fi
-if traced '^kapacitord'; then
-  bad "kapacitord was started anyway"
-else
-  ok "kapacitord not executed"
-fi
-
-say "kapacitor enabled    (must-pass)"
-CFG_kapacitor=true rc=$(run_script etc/services.d/kapacitor/run)
-if traced '^kapacitord'; then
-  ok "kapacitord started"
-else
-  bad "kapacitord did not start when enabled"
-fi
-
-say "kapacitor configuration (cont-init)"
-CFG_kapacitor=false CFG_reporting=true rc=$(run_script etc/cont-init.d/kapacitor.sh)
-check "cont-init exits 0 when disabled" "0" "${rc}"
-if traced '^tempio'; then
-  bad "kapacitor.conf rendered although disabled"
-else
-  ok "kapacitor.conf not rendered"
-fi
-CFG_kapacitor=true CFG_reporting=true rc=$(run_script etc/cont-init.d/kapacitor.sh)
-if traced '^tempio'; then
-  ok "kapacitor.conf rendered when enabled"
-else
-  bad "kapacitor.conf not rendered when enabled"
+  ok "the Dockerfile neither downloads nor installs Chronograf/Kapacitor"
 fi
 
 # ══ nginx ════════════════════════════════════════════════════════════════════
-say "nginx must not block on an upstream that never comes up"
-CFG_chronograf=false CFG_leave_front_door_open=false rc=$(run_script etc/services.d/nginx/run)
-if traced '^wait_for 8889'; then
-  bad "NGINX waits 9000 s for a disabled Chronograf"
-else
-  ok "no wait when disabled"
-fi
-if traced '^nginx'; then
-  ok "NGINX started"
-else
-  bad "NGINX did not start"
-fi
-CFG_chronograf=true CFG_leave_front_door_open=false rc=$(run_script etc/services.d/nginx/run)
-if traced '^wait_for 8889'; then
-  ok "NGINX still waits for Chronograf when enabled"
-else
-  bad "wait lost when enabled"
-fi
+for opt in false true; do
+  say "nginx with a stored chronograf=${opt}: no upstream to wait for"
+  CFG_chronograf=${opt} CFG_leave_front_door_open=false rc=$(run_script etc/services.d/nginx/run)
+  if traced '^wait_for 8889'; then
+    bad "NGINX waits 9000 s for a Chronograf that does not exist (chronograf=${opt})"
+  else
+    ok "no wait (chronograf=${opt})"
+  fi
+  if traced '^nginx'; then
+    ok "NGINX started (chronograf=${opt})"
+  else
+    bad "NGINX did not start (chronograf=${opt})"
+  fi
 
-say "ingress panel answers instead of proxying to a dead port"
-cp "${SANDBOX}/etc/nginx/servers/ingress.conf.orig" "${SANDBOX}/etc/nginx/servers/ingress.conf"
-CFG_chronograf=false CFG_ssl=true rc=$(run_script etc/cont-init.d/nginx.sh)
-ING="$(cat "${SANDBOX}/etc/nginx/servers/ingress.conf")"
-if grep -q 'proxy_pass' <<<"${ING}"; then
-  bad "ingress still proxies to a stopped Chronograf"
-else
-  ok "no proxy_pass when Chronograf is off"
-fi
-if grep -q "switched off by the add-on option" <<<"${ING}"; then
-  ok "ingress explains why the panel is empty"
-else
-  bad "ingress gives no reason"
-fi
-cp "${SANDBOX}/etc/nginx/servers/ingress.conf.orig" "${SANDBOX}/etc/nginx/servers/ingress.conf"
-CFG_chronograf=true CFG_ssl=true rc=$(run_script etc/cont-init.d/nginx.sh)
-if grep -q 'proxy_pass http://backend' "${SANDBOX}/etc/nginx/servers/ingress.conf"; then
-  ok "ingress proxies normally when enabled"
-else
-  bad "ingress proxy lost when enabled"
-fi
-if grep -q '172.30.33.5:1337' "${SANDBOX}/etc/nginx/servers/ingress.conf"; then
-  ok "ingress listener still templated"
-else
-  bad "ingress listener not templated"
-fi
+  say "ingress panel with a stored chronograf=${opt}: a notice, never a proxy"
+  cp "${SANDBOX}/etc/nginx/servers/ingress.conf.orig" "${SANDBOX}/etc/nginx/servers/ingress.conf"
+  CFG_chronograf=${opt} CFG_ssl=true rc=$(run_script etc/cont-init.d/nginx.sh)
+  ING="$(cat "${SANDBOX}/etc/nginx/servers/ingress.conf")"
+  if grep -q 'proxy_pass' <<<"${ING}"; then
+    bad "ingress proxies to a removed Chronograf (chronograf=${opt})"
+  else
+    ok "no proxy_pass (chronograf=${opt})"
+  fi
+  if grep -q "Chronograf was removed from this add-on" <<<"${ING}"; then
+    ok "ingress explains why the panel is empty (chronograf=${opt})"
+  else
+    bad "ingress gives no reason (chronograf=${opt})"
+  fi
+  if grep -q '172.30.33.5:1337' <<<"${ING}"; then
+    ok "ingress listener templated (chronograf=${opt})"
+  else
+    bad "ingress listener not templated (chronograf=${opt})"
+  fi
+done
 
 # ══ InfluxDB accounts ════════════════════════════════════════════════════════
 # The account table is the security half of the option: a disabled tool must
@@ -269,16 +184,18 @@ else
       set -- ${combo}
       # shellcheck source=/dev/null
       # shellcheck disable=SC1091,SC2030,SC2031
-      OUT="$( export TRACE=/dev/null
+      WARNLOG="${SANDBOX}/warn.txt"; : > "${WARNLOG}"
+      OUT="$( export TRACE="${WARNLOG}"
               source "${SANDBOX}/bashio-shim.sh"
               CFG_chronograf="$1" CFG_kapacitor="$2"
               eval "${BLOCK}"
               printf 'admin=[%s] disabled=[%s]' "${ADMIN_USERS}" "${DISABLED_TOOLS}" )"
-      case "${combo}" in
-        "false false") check "both off"        "admin=[ga_influx_admin] disabled=[chronograf kapacitor]" "${OUT}" ;;
-        "true false")  check "chronograf only" "admin=[ga_influx_admin chronograf] disabled=[kapacitor]" "${OUT}" ;;
-        "true true")   check "both on"         "admin=[ga_influx_admin chronograf kapacitor] disabled=[]" "${OUT}" ;;
-      esac
+      # Whatever a device stored, no tool account is created and both are dropped.
+      check "stored chronograf=$1 kapacitor=$2: no tool account, both dropped" \
+            "admin=[ga_influx_admin] disabled=[chronograf kapacitor]" "${OUT}"
+      want_warn=0; [[ "$1" == true ]] && want_warn=$((want_warn+1)); [[ "$2" == true ]] && want_warn=$((want_warn+1))
+      got_warn="$(grep -c "^WARN Option '.*' is ignored" "${WARNLOG}")"
+      check "stored chronograf=$1 kapacitor=$2: one warning per ignored option" "${want_warn}" "${got_warn}"
     done
     # Behaviour, not text: the live drop function is extracted and RUN against a
     # stubbed server. Grepping for the string "DROP USER" also matches the log
@@ -345,7 +262,7 @@ for key in chronograf kapacitor; do
   if grep -qE "^  ${key}: bool\??$" "${CFGY}"; then
     ok "option '${key}' is in the schema"
   else
-    bad "option '${key}' missing from schema: — the Supervisor would drop it"
+    bad "option '${key}' missing from schema: — a device that stored it would fail option validation (N61)"
   fi
 done
 
