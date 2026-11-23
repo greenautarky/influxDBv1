@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.25 (2026-11-23)
+
+- **Security rebuild, no source change against 0.0.24:** the image now carries `nginx`/`nginx-common` 1.26.3-3+deb13u11, fixing CVE-2026-113425, CVE-2026-121810, CVE-2026-123007 and CVE-2026-123633 (fixable CRITICAL; 0.0.23/0.0.24 shipped deb13u10). They blocked the BOSv1.6.1-rc3 bake.
+- Contains the 0.0.24 change (Chronograf and Kapacitor removed, Odoo #1973). It goes into rc3 by Manager decision 2026-11-23: the rc3 K31 fresh-flash gate checks influx explicitly (authenticated write/read after a FRESH flash).
+
 ## 0.0.24 (2026-11-19)
 
 - **Chronograf and Kapacitor removed** (Odoo #1973, decided by Thomas 2026-11-12).
