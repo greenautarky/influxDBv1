@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.26 (2026-11-24)
+
+- The provisioning server that creates databases and users at start listens on
+  loopback only, and has fully stopped before the regular server starts. Users,
+  grants, credential modes and the data directory are unchanged.
+- New CI test `tests/start_window`: runs the built image and checks the whole
+  start, with fresh data and with data directories from 0.0.19 to 0.0.25.
+
 ## 0.0.25 (2026-11-23)
 
 - **Security rebuild, no source change against 0.0.24:** the image now carries `nginx`/`nginx-common` 1.26.3-3+deb13u11, fixing CVE-2026-113425, CVE-2026-121810, CVE-2026-123007 and CVE-2026-123633 (fixable CRITICAL; 0.0.23/0.0.24 shipped deb13u10). They blocked the BOSv1.6.1-rc3 bake.

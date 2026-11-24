@@ -255,7 +255,13 @@ else
     provision_legacy_secret
 fi
 
-exec 3< <(influxd)
+# Loopback only. Authentication is switched on later (influxdb.sh), so nothing
+# outside this container may reach the provisioning server. The real server is
+# started by services.d with its normal bind. The bind is set in the environment
+# of this one process; the configuration file is not touched.
+exec 3< <(INFLUXDB_HTTP_BIND_ADDRESS=127.0.0.1:8086 \
+          INFLUXDB_BIND_ADDRESS=127.0.0.1:8088 exec influxd)
+INIT_INFLUXD_PID=$!
 
 sleep 3
 
@@ -373,4 +379,15 @@ fi
 
 drop_disabled_tool_users
 
-kill "$(pgrep influxd)" >/dev/null 2>&1
+# Wait until the provisioning server is gone: it holds 127.0.0.1:8086 and the
+# data dir. Without the wait the real server can meet either of them.
+kill "${INIT_INFLUXD_PID}" > /dev/null 2>&1 || true
+for _ in {1..60}; do
+    pgrep -x influxd > /dev/null || break
+    sleep 1
+done
+if pgrep -x influxd > /dev/null; then
+    bashio::log.warning "Provisioning influxd did not stop in 60 s, killing it"
+    pkill -KILL -x influxd || true
+    sleep 1
+fi
