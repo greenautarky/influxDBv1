@@ -39,11 +39,17 @@ RUN set -eux; \
       *) echo "unsupported BUILD_ARCH: ${BUILD_ARCH}"; exit 1 ;; \
     esac; \
     export CGO_ENABLED=0 GOOS=linux GOFLAGS=-mod=mod GOTOOLCHAIN=local; \
-    go get \
-      "google.golang.org/grpc@${GRPC_FLOOR}" \
-      "golang.org/x/crypto@${XCRYPTO_FLOOR}" \
-      "go.opentelemetry.io/otel/sdk@${OTELSDK_FLOOR}" \
-      "github.com/go-jose/go-jose/v4@${GOJOSE_FLOOR}"; \
+    # sum.golang.org drops the connection now and then (2 of 14 builds). Retry
+    # the same verified download; the checksum database stays in use.
+    for try in 1 2 3 4 5; do \
+      if go get \
+        "google.golang.org/grpc@${GRPC_FLOOR}" \
+        "golang.org/x/crypto@${XCRYPTO_FLOOR}" \
+        "go.opentelemetry.io/otel/sdk@${OTELSDK_FLOOR}" \
+        "github.com/go-jose/go-jose/v4@${GOJOSE_FLOOR}"; then break; fi; \
+      if [ "${try}" = 5 ]; then echo "FAIL: go get failed 5 times"; exit 1; fi; \
+      sleep 10; \
+    done; \
     grep -q "google.golang.org/grpc ${GRPC_FLOOR}" go.mod; \
     grep -q "golang.org/x/crypto ${XCRYPTO_FLOOR}" go.mod; \
     for c in influxd influx influx_inspect influx_stress; do \
