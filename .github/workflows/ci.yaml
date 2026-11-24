@@ -109,6 +109,13 @@ jobs:
           echo "parsed ${n} JSON file(s)"
           [ "$n" -gt 0 ] || { echo "::error::no JSON files inspected"; exit 1; }
 
+  release-tags:
+    name: Release tags (a released version is never overwritten)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: tests/release_tags/run.sh
+
   start-window:
     name: Start window (no request served without a credential)
     # Builds the image from THIS tree and runs it unmodified (s6, cont-init,

@@ -11,6 +11,19 @@ name: Build & Push (GHCR) - ga_influxdbv1
       # gate cannot fire on the change that broke it.
       - ".github/workflows/publish.yaml"
   workflow_dispatch:
+    inputs:
+      promote_version:
+        description: "Release a TESTED candidate without a rebuild: version tag to create (empty = build)"
+        default: ""
+      digest_armv7:
+        description: "full sha256 digest of the tested armv7 image"
+        default: ""
+      digest_aarch64:
+        description: "full sha256 digest of the tested aarch64 image"
+        default: ""
+      digest_amd64:
+        description: "full sha256 digest of the tested amd64 image"
+        default: ""
 
 permissions:
   contents: read
@@ -28,7 +41,36 @@ env:
   BASE_VERSION: 9.1.0
 
 jobs:
+  # The released bytes are the tested bytes: the version tag is put on existing
+  # digests. Never touches `latest`, never moves an existing tag, no store sync.
+  promote:
+    if: github.event_name == 'workflow_dispatch' && inputs.promote_version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Put the version on the tested digests
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.promote_version }}
+          D_ARMV7: ${{ inputs.digest_armv7 }}
+          D_AARCH64: ${{ inputs.digest_aarch64 }}
+          D_AMD64: ${{ inputs.digest_amd64 }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)+(-[0-9]+)?$ ]] || { echo "::error::bad version"; exit 1; }
+          want="$(awk '$1 == "version:" {print $2; exit}' "$ADDON_DIR/config.yaml")"
+          [ "$VERSION" = "$want" ] || { echo "::error::config.yaml says $want, not $VERSION"; exit 1; }
+          for d in "$D_ARMV7" "$D_AARCH64" "$D_AMD64"; do
+            [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::need three full digests"; exit 1; }
+          done
+          base="$IMAGE_NS/$ADDON_SLUG"
+          scripts/registry_tag.py promote "$base-armv7" "$VERSION" "$D_ARMV7"
+          scripts/registry_tag.py promote "$base-aarch64" "$VERSION" "$D_AARCH64"
+          scripts/registry_tag.py promote "$base-amd64" "$VERSION" "$D_AMD64"
+
   build:
+    if: github.event_name != 'workflow_dispatch' || inputs.promote_version == ''
     runs-on: ubuntu-latest
 
     strategy:
@@ -83,7 +125,7 @@ jobs:
               }' "$f"
           )
 
-          if [-z "${ver:-}"]; then
+          if [ -z "${ver:-}" ]; then
             echo "::error::Could not read version from $f"
             echo "First 30 lines for inspection:"; nl -ba "$f" | sed -n '1,30p'
             exit 1
@@ -213,22 +255,13 @@ jobs:
       # exact tags docker/metadata-action produced (the same
       # ghcr.io/greenautarky/ga_influxdbv1-<arch>:<version> + :latest scheme the
       # build-push step used to push directly) and push each one.
+      # A released version is never overwritten (scripts/push-tags.sh).
       - name: Push (gate passed — publish the vetted image)
-        run: |
-          set -euo pipefail
-          tags="${{ steps.meta.outputs.tags }}"
-          pushed=0
-          while IFS= read -r t; do
-            [-z "$t"] && continue
-            docker tag local/ga_influxdbv1:scan "$t"
-            docker push "$t"
-            pushed=$((pushed + 1))
-          done <<< "$tags"
-          if ["$pushed" -eq 0]; then
-            echo "::error::no tags resolved from metadata-action — nothing was pushed"
-            exit 1
-          fi
-          echo "Pushed $pushed tag(s) for ${{ matrix.ha_arch }}"
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: scripts/push-tags.sh local/ga_influxdbv1:scan <<< "$TAGS"
 
   # Downstream lock-step: the PUBLIC vibe_addons store entry is what the
   # Supervisor reads on the device — ports, options, schema, maps, and the
